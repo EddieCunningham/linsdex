@@ -1,0 +1,12 @@
+jax
+einops
+equinox
+diffrax
+pytest
+matplotlib
+jaxtyping
+ml-dtypes
+numpy
+plum-dispatch
+wadler_lindig
+tqdm
