@@ -6,11 +6,10 @@ import pytest
 from linsdex.matrix.matrix_with_inverse import MatrixWithInverse
 from linsdex.matrix.dense import DenseMatrix
 from linsdex.matrix.diagonal import DiagonalMatrix
+from .shared import matrices_equal, matrix_tests, performance_tests
 from linsdex.matrix.tags import Tags, TAGS
-from tests.matrix.shared import matrices_equal, matrix_tests, performance_tests
 from linsdex.matrix.matrix_base import AbstractSquareMatrix
-import equinox as eqx
-from tests.matrix.base_for_tests import AbstractMatrixTest, autodiff_for_matrix_class, matrix_implementations_tests
+from .base_for_tests import AbstractMatrixTest, autodiff_for_matrix_class, matrix_implementations_tests
 
 
 class TestMatrixWithInverse(unittest.TestCase, AbstractMatrixTest):

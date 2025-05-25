@@ -1,6 +1,11 @@
+import jax
+import jax.numpy as jnp
+from jax import random
+import unittest
 import pytest
-import numpy as np
 from linsdex.matrix.tags import Tags, TAGS
+from .shared import matrices_equal, matrix_tests, performance_tests
+from linsdex.matrix.matrix_base import AbstractSquareMatrix
 
 def create_tag(is_zero: bool, is_inf: bool) -> Tags:
   assert isinstance(is_zero, bool)

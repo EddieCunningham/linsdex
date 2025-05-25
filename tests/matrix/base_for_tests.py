@@ -5,7 +5,7 @@ import unittest
 import pytest
 from linsdex.matrix.matrix_base import AbstractSquareMatrix
 from linsdex.matrix.tags import Tags, TAGS
-from tests.matrix.shared import matrices_equal, matrix_tests, performance_tests
+from .shared import matrices_equal, matrix_tests, performance_tests
 from jax import grad, jacfwd, value_and_grad
 from typing import Type, Callable, Tuple, Any, Dict, List, Optional
 from itertools import product

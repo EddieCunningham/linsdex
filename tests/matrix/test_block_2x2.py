@@ -7,12 +7,12 @@ from linsdex.matrix.block.block_2x2 import Block2x2Matrix
 from linsdex.matrix.dense import DenseMatrix
 from linsdex.matrix.diagonal import DiagonalMatrix
 from linsdex.matrix.tags import Tags, TAGS
-from tests.matrix.shared import matrices_equal, matrix_tests, performance_tests
+from .shared import matrices_equal, matrix_tests, performance_tests
 from linsdex.matrix.matrix_base import AbstractSquareMatrix
 import equinox as eqx
 import jax.tree_util as jtu
 import einops
-from tests.matrix.base_for_tests import AbstractMatrixTest, autodiff_for_matrix_class, matrix_implementations_tests
+from .base_for_tests import AbstractMatrixTest, autodiff_for_matrix_class, matrix_implementations_tests
 # turn on x64 precision for better numerical stability
 jax.config.update('jax_enable_x64', True)
 
