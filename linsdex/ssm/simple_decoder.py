@@ -86,9 +86,9 @@ class PaddingLatentVariableDecoder(AbstractDecoder):
     **Returns**:
       - `series`: The observed data
     """
-    xts = series.yts
+    xts = series.values
     yts = xts[...,:self.y_dim]
-    return TimeSeries(series.ts, yts, series.observation_mask[...,:self.y_dim])
+    return TimeSeries(series.times, yts, series.mask)
 
 ################################################################################################################
 

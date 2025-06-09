@@ -1,21 +1,3 @@
-"""
-Gaussian distribution implementations in various parametrizations.
-
-This module provides different parametrizations of multivariate Gaussian distributions:
-- NaturalGaussian: Natural parameter (information) form using precision matrix J and vector h
-- StandardGaussian: Standard form using mean μ and covariance matrix Σ
-- MixedGaussian: Mixed form using mean μ and precision matrix J
-- NaturalJointGaussian: Natural parameters for joint distributions over pairs of variables
-
-Each parametrization has advantages in different contexts:
-- Natural form is convenient for combining multiple distributions (adding potentials)
-- Standard form is more intuitive and useful for sampling
-- Mixed form can be numerically more stable for certain operations
-
-The module also provides conversions between formats and operations like marginalization,
-conditioning, and sampling. All implementations derive from AbstractPotential.
-"""
-
 import jax
 import jax.numpy as jnp
 from jax import random
@@ -47,7 +29,8 @@ __all__ = [
 ]
 
 # Flag to control whether to use Cholesky factorization or SVD for sampling
-_USE_CHOL = False
+# _USE_CHOL = False
+_USE_CHOL = True
 
 ################################################################################################################
 
@@ -527,6 +510,14 @@ class NaturalJointGaussian(NaturalGaussian):
   @auto_vmap
   def sample(self, key: PRNGKeyArray):
     return NaturalGaussian(self.J, self.h).sample(key)
+
+  @classmethod
+  def total_certainty_like(cls, x: Float[Array, 'D'], other: 'AbstractPotential') -> 'AbstractPotential':
+    raise NotImplementedError
+
+  @classmethod
+  def total_uncertainty_like(cls, other: 'AbstractPotential') -> 'AbstractPotential':
+    raise NotImplementedError
 
 ################################################################################################################
 

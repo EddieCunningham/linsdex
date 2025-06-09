@@ -426,8 +426,6 @@ def _ode_sde_solve(sde: AbstractSDE,
                    params: SDESolverParams = SDESolverParams(),
                    diffrax_solver_state: Optional[DiffraxSolverState] = DiffraxSolverState(),
                    return_solve_solution: Optional[bool] = False) -> Union[TimeSeries, Tuple[TimeSeries, DiffraxSolverState]]:
-  if x0.ndim != 1:
-    raise ValueError("Can only call this with unbatched data!  We need a unique key for every data point.")
   if key is not None and key.ndim > 1:
     raise ValueError("Can only call this with a single key!  We need a unique key for every data point.")
 
@@ -473,13 +471,16 @@ def _ode_sde_solve(sde: AbstractSDE,
                             controller_state=diffrax_solver_state.controller_state)
 
   from linsdex.series.series import TimeSeries
+  if isinstance(sol.ys, TimeSeries):
+    out = sol.ys
+  else:
+    out = TimeSeries(save_times, sol.ys)
   if return_solve_solution:
     updated_diffrax_solver_state = DiffraxSolverState(solver_state=sol.solver_state,
                                                       controller_state=sol.controller_state)
-
-    return TimeSeries(save_times, sol.ys), updated_diffrax_solver_state
+    return out, updated_diffrax_solver_state
   else:
-    return TimeSeries(save_times, sol.ys)
+    return out
 
 ################################################################################################################
 

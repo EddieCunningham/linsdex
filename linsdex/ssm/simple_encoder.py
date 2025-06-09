@@ -56,7 +56,8 @@ class IdentityEncoder(AbstractEncoder, abc.ABC):
     self.potential_cov_type = 'diagonal'
 
   def encode(self, series: TimeSeries) -> Float[Array, 'T D']:
-    return jnp.where(series.observation_mask, series.yts, 0.0)
+    mask = jnp.broadcast_to(series.mask[:,None], series.values.shape)
+    return jnp.where(mask, series.values, 0.0)
 
   def __call__(
     self,
@@ -74,7 +75,7 @@ class IdentityEncoder(AbstractEncoder, abc.ABC):
     """
     xts = self.encode(series)
     inverse_covs = None
-    prob_series = GaussianPotentialSeries(series.ts, xts, inverse_covs)
+    prob_series = GaussianPotentialSeries(series.times, xts, inverse_covs)
     return prob_series
 
 ################################################################################################################
@@ -113,13 +114,12 @@ class PaddingLatentVariableEncoderWithPrior(AbstractEncoder):
     """Return the mean and inverse covariance of the potential function for the latent variable model.
 
     **Arguments**:
-      - `y`: The observed data
-      - `observation_mask`: A mask indicating which elements of the data are observed
+      - `series`: The observed data
+      - `parameterization`: The parameterization of the potential function
 
     **Returns**:
       - `mean`: The mean of the potential function
       - `inverse_cov`: The inverse covariance of the potential function
-      - `observation_mask`: A mask indicating which elements of the data are observed
     """
     def process_single_elt(y, mask):
       y = jnp.where(mask, y, 0.0)
@@ -131,7 +131,8 @@ class PaddingLatentVariableEncoderWithPrior(AbstractEncoder):
       inverse_cov = jnp.where(mask, inverse_cov, 0.0)
       return mean, inverse_cov
 
-    means, inverse_covs = jax.vmap(process_single_elt)(series.yts, series.observation_mask)
+    full_mask = jnp.broadcast_to(series.mask[:,None], series.values.shape)
+    means, inverse_covs = jax.vmap(process_single_elt)(series.values, full_mask)
 
     # Add a standard Gaussian prior in the first position
     if self.use_prior:
@@ -140,7 +141,7 @@ class PaddingLatentVariableEncoderWithPrior(AbstractEncoder):
 
     if parameterization is None:
       parameterization = 'natural'
-    prob_series = GaussianPotentialSeries(series.ts, means, certainty=inverse_covs, parameterization=parameterization)
+    prob_series = GaussianPotentialSeries(series.times, means, certainty=inverse_covs, parameterization=parameterization)
     return prob_series
 
   def from_observation_space_prob_series(self, prob_series: GaussianPotentialSeries) -> GaussianPotentialSeries:
@@ -165,7 +166,7 @@ class PaddingLatentVariableEncoderWithPrior(AbstractEncoder):
       return new_potential
 
     new_potentials = jax.vmap(process_single_potential)(potentials)
-    prob_series = GaussianPotentialSeries(prob_series.ts, new_potentials)
+    prob_series = GaussianPotentialSeries(prob_series.times, new_potentials)
     return prob_series
 
 ################################################################################################################

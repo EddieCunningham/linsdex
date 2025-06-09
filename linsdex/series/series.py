@@ -99,6 +99,9 @@ class TimeSeries(AbstractBatchableObject):
     if times_batch_size != values.shape[:-2]:
       raise ValueError(f"Times and values must have the same batch size, got {times_batch_size} and {values.shape[:-2]}")
 
+    if times.shape[-1] != values.shape[-2]:
+      raise ValueError(f"Times and values must have the same number of time points, got {times.shape[-1]} and {values.shape[-2]}")
+
     self.times = times
     self.values = values
     self.mask = mask
@@ -328,7 +331,7 @@ if __name__ == "__main__":
   # ts, values, mask = data['ts'], data['yts'], data['observation_mask']
 
   data = pickle.load(open('series.pkl', 'rb'))
-  ts, values, mask = data.ts, data.yts, data.observation_mask
+  ts, values, mask = data.times, data.values, data.observation_mask
 
   mask = jnp.any(mask, axis=-1)
   series = TimeSeries(ts, values, mask)

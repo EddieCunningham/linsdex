@@ -402,3 +402,44 @@ class TestCRF:
 
     bwd_messages_seq = short_crf_seq.get_backward_messages()
     assert jtu.tree_all(jtu.tree_map(jnp.allclose, bwd_messages.to_std(), bwd_messages_seq.to_std()))
+
+
+if __name__ == "__main__":
+  from debug import *
+  import jax.numpy as jnp
+  x_dim = 4
+  key = random.PRNGKey(0)
+  A = random.normal(key, (x_dim, x_dim))
+  A, _ = jnp.linalg.qr(A)
+
+  import pdb; pdb.set_trace()
+
+
+  test = TestCRF()
+  setup_crf_data = test.setup_crf_data()
+  crf_sequential = test.crf_sequential(setup_crf_data)
+  crf_parallel = test.crf_parallel(setup_crf_data)
+
+  test.test_crf_initialization(setup_crf_data)
+
+  test.test_crf_indexing(crf_sequential)
+  test.test_crf_reverse(crf_sequential)
+  test.test_messages_class(crf_sequential)
+
+  test.test_basic_crf_functionality(crf_sequential, setup_crf_data)
+  test.test_parallel_vs_sequential_consistency(crf_sequential, crf_parallel)
+  test.test_marginals_correctness(crf_sequential)
+  test.test_joints_correctness(crf_sequential)
+  test.test_log_prob_correctness(crf_sequential, setup_crf_data)
+  test.test_edge_cases_deterministic_potentials(crf_sequential, setup_crf_data)
+  test.test_zero_potentials(crf_sequential)
+  test.test_marginalization(crf_sequential)
+  test.test_marginalize_indices(crf_sequential)
+  test.test_canonical_form(crf_sequential)
+  test.test_sampling(crf_sequential, crf_parallel, setup_crf_data)
+  test.test_to_prior_and_chain(crf_sequential)
+  test.test_normalizing_constant(crf_sequential)
+  test.test_short_sequence_unrolled(setup_crf_data)
+  import pdb; pdb.set_trace()
+
+  # python -c 'import jax.numpy as jnp;jnp.linalg.qr(jnp.eye(2))'

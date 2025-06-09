@@ -51,7 +51,7 @@ class StochasticSSM(AbstractStateSpaceModel):
     self.sde = sde
     self.t0 = ts[0]
     self.prior = prior
-    self.ts = ts
+    self.times = ts
 
     assert emissions.batch_size == ts.shape[0], "This model assumes that we have different emissions for each time point"
     self.emissions = emissions
@@ -62,7 +62,7 @@ class StochasticSSM(AbstractStateSpaceModel):
   @property
   def transitions(self):
     # Construct the transitions
-    s, t = self.ts[:-1], self.ts[1:]
+    s, t = self.times[:-1], self.times[1:]
     def make_transition_potential(s, t):
       return self.sde.get_transition_distribution(s, t)
     return eqx.filter_vmap(make_transition_potential)(s, t)
@@ -71,15 +71,15 @@ class StochasticSSM(AbstractStateSpaceModel):
 
 def em_update(sde_ssm: StochasticSSM, yts: Float[Array, 'B N Dy']) -> StochasticSSM:
   """Update sde using EM given the data yts.  This function makes the HUGE assumption that
-  sde_ssm.ts is a regular grid of times!!!!"""
+  sde_ssm.times is a regular grid of times!!!!"""
 
   # Check that the time intervals are uniform
-  dt = jnp.diff(sde_ssm.ts)
+  dt = jnp.diff(sde_ssm.times)
   dt_std = jnp.std(dt)
   if dt_std > 1e-10:
     raise ValueError("Time intervals must be uniform for EM updates")
 
-  transition = sde_ssm.sde.get_transition_distribution(sde_ssm.ts[0], sde_ssm.ts[1])
+  transition = sde_ssm.sde.get_transition_distribution(sde_ssm.times[0], sde_ssm.times[1])
 
   from linsdex.ssm.lds import lds_e_step, lds_m_update
   lds = LinearDynamicalSystem(sde_ssm.prior, transition, sde_ssm.emissions)
@@ -116,8 +116,8 @@ if __name__ == '__main__':
 
   import pickle
   series = pickle.load(open('series.pkl', 'rb'))[:10]
-  ts = jnp.array(series.ts)*1.0
-  yts = jnp.array(series.yts)[...,:2]
+  ts = jnp.array(series.times)*1.0
+  yts = jnp.array(series.values)[...,:2]
   N = ts.shape[0]
 
 

@@ -115,6 +115,32 @@ class Messages(AbstractBatchableObject):
 
 ################################################################################################################
 
+def pytree_has_nan(x: PyTree) -> bool:
+  return not jtu.tree_all(jtu.tree_map(lambda x: (~jnp.isnan(x)).all(), x))
+
+def debug_crf(crf: 'CRF'):
+  # Start with the last node's potential
+  message = crf.base_transitions[-1].update_and_marginalize_out_y(crf.node_potentials[-1])
+  if pytree_has_nan(message):
+    import pdb; pdb.set_trace()
+  zero_message = message.total_uncertainty_like(message)
+  messages = [zero_message, message]
+
+  # Loop backwards through remaining nodes
+  for i in range(len(crf)-2, 0, -1):
+    updated_message = message + crf.node_potentials[i]
+    if pytree_has_nan(updated_message):
+      import pdb; pdb.set_trace()
+    message = crf.base_transitions[i-1].update_and_marginalize_out_y(updated_message)
+    if pytree_has_nan(message):
+      import pdb; pdb.set_trace()
+    messages.append(message)
+
+  # Reverse the list and stack all messages together
+  messages = messages[::-1]
+  messages = jtu.tree_map(lambda *xs: jnp.stack(xs), *messages)
+  return messages
+
 class CRF(AbstractPotential):
   """Conditional Random Field (CRF) implementation for sequential latent variable models.
 
@@ -164,6 +190,14 @@ class CRF(AbstractPotential):
 
     if len(self) <= 1:
       raise ValueError("CRF must have at least 2 nodes")
+
+  @classmethod
+  def total_certainty_like(cls, x: Float[Array, 'D'], other: 'AbstractPotential') -> 'AbstractPotential':
+    raise NotImplementedError
+
+  @classmethod
+  def total_uncertainty_like(cls, other: 'AbstractPotential') -> 'AbstractPotential':
+    raise NotImplementedError
 
   def __getitem__(self, idx: Any):
     """Get a slice of the CRF.  We need to ensure that the size of the base transitions is

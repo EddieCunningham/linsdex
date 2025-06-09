@@ -99,6 +99,36 @@ class AbstractPotential(AbstractBatchableObject, abc.ABC):
     """
     pass
 
+  @classmethod
+  @abc.abstractmethod
+  def total_certainty_like(cls, x: Float[Array, 'D'], other: 'AbstractPotential') -> 'AbstractPotential':
+    """Create a deterministic distribution at point x.  When added to another potential,
+    this has the same effect as conditioning on x.
+
+    Args:
+      x: The point at which to place the Dirac delta
+      other: Template Gaussian to match structure with
+
+    Raises:
+      AssertionError: Natural parametrization cannot represent Dirac deltas
+    """
+    pass
+
+  @classmethod
+  @abc.abstractmethod
+  def total_uncertainty_like(cls, other: 'AbstractPotential') -> 'AbstractPotential':
+    """Create a completely uninformative (uniform) distribution.
+
+    Creates a distribution with zero information.
+
+    Args:
+      other: Template Gaussian to match structure with
+
+    Returns:
+      An uninformative Gaussian with the same structure as other
+    """
+    pass
+
 ################################################################################################################
 
 class AbstractTransition(AbstractBatchableObject, abc.ABC):
@@ -488,5 +518,13 @@ class JointPotential(AbstractPotential):
     # Update interval for bookkeeping
     new_interval = self.interval.chain(other.interval)
     return eqx.tree_at(lambda x: x.interval, new_joint, new_interval)
+
+  @classmethod
+  def total_certainty_like(cls, x: Float[Array, 'D'], other: 'AbstractPotential') -> 'AbstractPotential':
+    raise NotImplementedError
+
+  @classmethod
+  def total_uncertainty_like(cls, other: 'AbstractPotential') -> 'AbstractPotential':
+    raise NotImplementedError
 
 ################################################################################################################

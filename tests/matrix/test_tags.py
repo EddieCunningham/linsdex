@@ -5,6 +5,7 @@ import unittest
 import pytest
 from linsdex.matrix.tags import Tags, TAGS
 from .shared import matrices_equal, matrix_tests, performance_tests
+import numpy as np
 from linsdex.matrix.matrix_base import AbstractSquareMatrix
 
 def create_tag(is_zero: bool, is_inf: bool) -> Tags:

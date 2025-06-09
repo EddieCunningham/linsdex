@@ -96,10 +96,10 @@ class AbstractContinuousCRF(AbstractBatchableObject, abc.ABC):
 
   def log_prob(self, series: TimeSeries) -> Scalar:
     """Evaluate the log of the probability of x under the distribution"""
-    result = self.discretize(series.ts)
+    result = self.discretize(series.times)
     crf = result.crf
     info = result.info
-    return crf.marginalize(info.new_indices).log_prob(series.yts)
+    return crf.marginalize(info.new_indices).log_prob(series.values)
 
   def sample(self, key: PRNGKeyArray, ts: Float[Array, 'T']) -> TimeSeries:
     """Sample from this process at the given times by discretizing it at the given times.

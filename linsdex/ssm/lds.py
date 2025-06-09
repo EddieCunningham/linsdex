@@ -208,12 +208,12 @@ if __name__ == '__main__':
 
   import pickle
   series = pickle.load(open('series.pkl', 'rb'))[:10]
-  ts = jnp.array(series.ts)*1.0
-  yts = jnp.array(series.yts)[...,:2].astype(jnp.float64)
+  ts = jnp.array(series.times)*1.0
+  yts = jnp.array(series.values)[...,:2].astype(jnp.float64)
   yts = yts[None]
 
   # series = TimeSeries(ts, yts).make_windowed_batches(window_size=10)[:1]
-  # ts, yts = series.ts, series.yts
+  # ts, yts = series.times, series.values
   N = ts.shape[-1]
 
 

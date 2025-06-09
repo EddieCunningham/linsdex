@@ -318,7 +318,7 @@ def plot_series(self,
     if not isinstance(axes, list) and not isinstance(axes, np.ndarray):
       axes = [axes]
 
-  # Prepare values for y-range calculation
+  # Prepare data for y-range calculation
   values_list = []
   masks_list = []
 
@@ -372,7 +372,7 @@ def plot_series(self,
 
     # Set y-axis range and style the axes
     _set_y_limits(ax, k, y_ranges)
-    _style_axes(ax, k, num_dims)
+    _style_axes(ax, k, num_dims, is_first_col=(i == 0))
 
   # Add a legend if we have any legend handles
   if create_new_figure and legend_handles:
@@ -503,37 +503,26 @@ def plot_multiple_series(series_list: List['TimeSeries'],
   all_values_list = []
   all_masks_list = []
 
-  for k in range(plot_dims):
-    values_for_dim = []
-    masks_for_dim = []
+  for i, series in enumerate(series_list):
+    is_batched = series.batch_size is not None and isinstance(series.batch_size, int)
 
-    for i, series in enumerate(series_list):
-      is_batched = series.batch_size is not None and isinstance(series.batch_size, int)
+    if is_batched and plot_all_samples:
+      # Collect from all samples in batch
+      for j in range(series.batch_size):
+        sample = series[j]
+        all_values_list.append(np.array(sample.values))
+        all_masks_list.append(np.array(sample.mask))
+    else:
+      # Single series or specific index
+      current_series = series
+      if is_batched and index is not None and index != 'all':
+        current_series = series[index]
 
-      if is_batched and plot_all_samples:
-        # Collect from all samples in batch
-        for j in range(series.batch_size):
-          sample = series[j]
-          if k < sample.values.shape[-1]:
-            values_for_dim.append(np.array(sample.values))
-            masks_for_dim.append(np.array(sample.mask))
-      else:
-        # Single series or specific index
-        current_series = series
-        if is_batched and index is not None and index != 'all':
-          current_series = series[index]
+      all_values_list.append(np.array(current_series.values))
+      all_masks_list.append(np.array(current_series.mask))
 
-        if k < current_series.values.shape[-1]:
-          values_for_dim.append(np.array(current_series.values))
-          masks_for_dim.append(np.array(current_series.mask))
-
-    all_values_list.append(values_for_dim)
-    all_masks_list.append(masks_for_dim)
-
-  # Calculate y-axis ranges for each dimension
-  y_ranges = []
-  for k in range(plot_dims):
-    y_ranges.append(_compute_y_ranges(all_values_list[k], all_masks_list[k], 1)[0])
+  # Calculate y-axis ranges for all dimensions at once
+  y_ranges = _compute_y_ranges(all_values_list, all_masks_list, plot_dims)
 
   # Track legend handles and labels
   legend_handles = []
@@ -602,7 +591,7 @@ def plot_multiple_series(series_list: List['TimeSeries'],
             legend_labels.append(label)
 
       # Set y-axis range and style the axes
-      _set_y_limits(ax, 0, [y_ranges[k]])
+      _set_y_limits(ax, k, y_ranges)
       _style_axes(ax, k, plot_dims, is_first_col=(i == 0))
 
   # Add a common legend if we have any legend handles

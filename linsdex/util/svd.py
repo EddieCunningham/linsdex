@@ -64,10 +64,18 @@ if __name__ == '__main__':
   dA = random.normal(k2, A.shape)
 
   (U, s, V), (dU, ds, dV) = jax.jvp(my_svd, (A,), (dA,))
+
+  # Create 2x2 block matrices from debugger output
+  primals = jnp.array([[1497.9131, 0., 461.4255, 0.],
+                       [0., 1497.9131, 0., 461.4255],
+                       [461.4255, 0., 302.74088, 0.],
+                       [0., 461.4255, 0., 302.74088]], dtype=jnp.float32)
+  U, s, V = my_svd(primals)
+
+
   import pdb; pdb.set_trace()
 
   # Check gradients using multiple orders of differentiation
   # This will compare analytical gradients against numerical ones
   check_grads(test_fn, (A,), order=2, modes=["fwd", "rev"])
 
-  import pdb; pdb.set_trace()
