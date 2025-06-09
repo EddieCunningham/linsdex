@@ -435,8 +435,6 @@ def get_log_det(A: Block3x3Matrix) -> Scalar:
 def get_cholesky(A: Block3x3Matrix) -> Block3x3Matrix:
   m11, m12, m13, m21, m22, m23, m31, m32, m33 = A.matrices[0,0], A.matrices[0,1], A.matrices[0,2], A.matrices[1,0], A.matrices[1,1], A.matrices[1,2], A.matrices[2,0], A.matrices[2,1], A.matrices[2,2]
 
-  warnings.warn('Block3x3Matrix.get_cholesky is not passing autodiff tests!')
-
   # For a symmetric positive definite matrix, compute the Cholesky decomposition
   # Using the block Cholesky algorithm:
   # A = L L^T where L is lower triangular
@@ -446,6 +444,9 @@ def get_cholesky(A: Block3x3Matrix) -> Block3x3Matrix:
   m12, m21 = 0.5*(m12 + m21.T), 0.5*(m21 + m12.T)
   m13, m31 = 0.5*(m13 + m31.T), 0.5*(m31 + m13.T)
   m23, m32 = 0.5*(m23 + m32.T), 0.5*(m32 + m23.T)
+  m11 = 0.5*(m11 + m11.T) # No idea why, but this is required to pass autodiff tests
+  m22 = 0.5*(m22 + m22.T)
+  m33 = 0.5*(m33 + m33.T)
 
   def rev_solve(A, B):
     # BA^{-1} = ((A^{-1})^T B^T)^T
