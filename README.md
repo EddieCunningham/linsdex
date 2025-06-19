@@ -32,26 +32,22 @@ samples.plot()
 # Installation
 
 ```bash
-pip install linsdex
+pip install .
 ```
 
 ## SDEs implemented
+Check out the [sde_examples.py](linsdex/sde/sde_examples.py) file for the SDEs that are implemented.  This list includes:
 
-We welcome contributions! Please see our contributing guidelines for details on:
-- Code style and standards
-- Testing requirements
-- Documentation expectations
-- Pull request process
+- Brownian motion
+- Ornstein-Uhlenbeck
+- Variance preserving SDE
+- Wiener velocity model
+- Critically damped Langevin dynamics
+- Third order Langevin dynamics
+- Stochastic harmonic oscillator
 
 ## How it works
 Inference in `linsdex` is done by discretizing the SDE and potentials into a CRF, and then using message passing to perform inference.  This library only considers linear SDEs and Gaussian potentials, and so the CRF is a chain structured Gaussian CRF, which is a probabilitic model that admits fast, closed form inference.
-
-## Contributing
-If you want to contribute to `linsdex`, you can build the project locally by running:
-```bash
-pip install -e .
-```
-This will install the package in editable mode, so that you can make changes to the code and they will be reflected in the installed package.  You can also run the tests using `pytest`.
 
 ## Citation
 If you use linsdex in your research, please cite:
