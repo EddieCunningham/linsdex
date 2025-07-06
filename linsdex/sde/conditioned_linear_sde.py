@@ -285,16 +285,19 @@ class ConditionedLinearSDE(AbstractLinearSDE, AbstractContinuousCRF):
       vt = self.sde.get_drift(t, xt)
       L = self.sde.get_diffusion_coefficient(t, xt)
       LLT = L@L.T
+      score = pxt.score(xt)
+      noise = pxt.get_noise(xt)
       fwd_score, bwd_score = fwd.score(xt), bwd.score(xt)
       flow = vt + 0.5*LLT@(bwd_score - fwd_score)
       drift = vt + LLT@bwd_score
       return FlowItems(t=t,
                        xt=xt,
                        flow=flow,
-                       score=pxt.score(xt),
+                       score=score,
+                       noise=noise,
                        drift=drift,
-                       fwd=fwd,
-                       bwd=bwd)
+                       fwd_score=fwd_score,
+                       bwd_score=bwd_score)
 
     items = jax.vmap(get_items)(info.times, xts, fwd, bwd, marginals)
     return items
@@ -329,9 +332,10 @@ class FlowItems(AbstractBatchableObject):
   xt: Float[Array, 'D']
   flow: Float[Array, 'D']
   score: Float[Array, 'D']
+  noise: Float[Array, 'D']
   drift: Float[Array, 'D']
-  fwd: AbstractPotential
-  bwd: AbstractPotential
+  fwd_score: Float[Array, 'D']
+  bwd_score: Float[Array, 'D']
 
   @property
   def batch_size(self) -> Union[None,int,Tuple[int]]:

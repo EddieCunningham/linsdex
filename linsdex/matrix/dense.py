@@ -24,10 +24,10 @@ class DenseMatrix(AbstractSquareMatrix):
   def __init__(
       self,
       elements: Float[Array, 'M N'],
-      tags: Tags
+      tags: Optional[Tags] = None
   ):
     self.elements = elements
-    self.tags = tags
+    self.tags = tags if tags is not None else TAGS.no_tags
 
   @property
   def batch_size(self) -> Union[None,int,Tuple[int]]:

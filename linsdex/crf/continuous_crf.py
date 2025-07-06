@@ -150,9 +150,6 @@ class AbstractContinuousCRF(AbstractBatchableObject, abc.ABC):
     node_potentials = eqx.filter_vmap(make_zero)(jnp.arange(all_ts.shape[-1]))
 
     # Place our priors in the node potentials
-    # def fill_node_potentials(potential, i):
-    #   return jtu.tree_map(lambda t, elt: t.at[i].set(elt), node_potentials, potential)
-    # node_potentials = fill_node_potentials(self.node_potentials, info.base_indices)
     node_potentials = util.fill_array(node_potentials, info.base_indices, self.node_potentials)
 
     # Make the transitions for the new times

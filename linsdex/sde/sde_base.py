@@ -21,7 +21,7 @@ from linsdex.matrix.dense import DenseMatrix
 from linsdex.potential.gaussian import GaussianTransition
 from plum import dispatch
 import linsdex.util as util
-from linsdex.series.interleave_times import InterleavedTimes
+from linsdex.potential.gaussian.gaussian_potential_series import GaussianPotentialSeries
 
 __all__ = ['AbstractSDE',
            'AbstractLinearSDE',
@@ -136,8 +136,7 @@ class AbstractLinearSDE(AbstractSDE, abc.ABC):
 
     return GaussianTransition(A, u, Sigma)
 
-  def condition_on(self, evidence: 'GaussianPotentialSeries') -> 'ConditionedLinearSDE':
-    from linsdex.potential.gaussian.gaussian_potential_series import GaussianPotentialSeries
+  def condition_on(self, evidence: GaussianPotentialSeries) -> 'ConditionedLinearSDE':
     from linsdex.sde.conditioned_linear_sde import ConditionedLinearSDE
     return ConditionedLinearSDE(self, evidence)
 

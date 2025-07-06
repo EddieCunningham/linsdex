@@ -12,13 +12,13 @@ from plum import dispatch, ModuleType
 from jaxtyping import Array, PRNGKeyArray, Float, Scalar, Bool, PyTree
 # from linsdex.potential.gaussian.dist import NaturalGaussian, StandardGaussian, MixedGaussian
 
-def psd_check(J: "AbstractMatrix"):
+def psd_check(J: "AbstractSquareMatrix"):
   # J = eqx.error_if(J, jnp.any(jnp.linalg.eigvalsh(J.as_matrix()) < 0), "Matrix must be positive definite")
   # J = eqx.error_if(J, jnp.any(J.as_matrix() - J.T.as_matrix() != 0), "Matrix must be symmetric for real!")
   # J = eqx.error_if(J, ~J.tags.is_symmetric, "Matrix must be symmetric")
   return J
 
-def inverse_check(A: "AbstractMatrix"):
+def inverse_check(A: "AbstractSquareMatrix"):
   # A = eqx.error_if(A, A.tags.is_zero, "Cannot invert a zero matrix")
   return A
 

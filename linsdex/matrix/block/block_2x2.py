@@ -26,12 +26,12 @@ class Block2x2Matrix(AbstractSquareMatrix):
   def __init__(
       self,
       matrices: Annotated[AbstractSquareMatrix, '2 2'],
-      tags: Tags
+      tags: Optional[Tags] = None
   ):
     assert isinstance(matrices, AbstractSquareMatrix)
     assert matrices.batch_size == (2, 2)
     self.matrices = matrices
-    self.tags = tags
+    self.tags = tags if tags is not None else TAGS.no_tags
 
   @property
   def elements(self):

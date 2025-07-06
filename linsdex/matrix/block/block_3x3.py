@@ -26,12 +26,12 @@ class Block3x3Matrix(AbstractSquareMatrix):
   def __init__(
       self,
       matrices: Annotated[AbstractSquareMatrix, '3 3'],
-      tags: Tags
+      tags: Optional[Tags] = None
   ):
     assert isinstance(matrices, AbstractSquareMatrix)
     assert matrices.batch_size == (3, 3)
     self.matrices = matrices
-    self.tags = tags
+    self.tags = tags if tags is not None else TAGS.no_tags
 
   @property
   def elements(self):
@@ -444,7 +444,7 @@ def get_cholesky(A: Block3x3Matrix) -> Block3x3Matrix:
   m12, m21 = 0.5*(m12 + m21.T), 0.5*(m21 + m12.T)
   m13, m31 = 0.5*(m13 + m31.T), 0.5*(m31 + m13.T)
   m23, m32 = 0.5*(m23 + m32.T), 0.5*(m32 + m23.T)
-  m11 = 0.5*(m11 + m11.T) # No idea why, but this is required to pass autodiff tests
+  m11 = 0.5*(m11 + m11.T)
   m22 = 0.5*(m22 + m22.T)
   m33 = 0.5*(m33 + m33.T)
 

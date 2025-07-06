@@ -13,8 +13,8 @@ import equinox as eqx
 import jax.tree_util as jtu
 import einops
 from .base_for_tests import AbstractMatrixTest, autodiff_for_matrix_class, matrix_implementations_tests
-# turn on x64 precision for better numerical stability
-jax.config.update('jax_enable_x64', True)
+# # turn on x64 precision for better numerical stability
+# jax.config.update('jax_enable_x64', True)
 
 class TestBlock3x3Matrix(unittest.TestCase, AbstractMatrixTest):
   matrix_class = Block3x3Matrix
