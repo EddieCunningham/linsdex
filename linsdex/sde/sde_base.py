@@ -49,7 +49,7 @@ class AbstractSDE(AbstractBatchableObject, abc.ABC):
 class AbstractLinearSDE(AbstractSDE, abc.ABC):
 
   @abc.abstractmethod
-  def get_params(self, t: Scalar, xt: Float[Array, 'D']) -> Tuple[AbstractSquareMatrix,
+  def get_params(self, t: Scalar) -> Tuple[AbstractSquareMatrix,
                                            Float[Array, 'D'],
                                            AbstractSquareMatrix]:
     """Get F, u, and L at time t
@@ -71,6 +71,8 @@ class AbstractLinearSDE(AbstractSDE, abc.ABC):
     6.1 of Särkkä's book (https://users.aalto.fi/~asolin/sde-book/sde-book.pdf)
     for the math details.  This class solves everything in reverse in order to
     only need to solve one ODE.
+
+    TODO: Speed this up with a parallel algorithm.
 
     This solves for the transition parameters, A_{t,s}, u_{t,s}, and Sigma_{t,s} so that
     for a starting point x_s, the transition distribution p(x_t | x_s) is Gaussian
@@ -159,7 +161,7 @@ class AbstractLinearTimeInvariantSDE(AbstractLinearSDE, abc.ABC):
   def dim(self) -> int:
     return self.F.shape[0]
 
-  def get_params(self, t: Scalar, xt: Optional[Float[Array, 'D']] = None) -> Tuple[AbstractSquareMatrix,
+  def get_params(self, t: Scalar) -> Tuple[AbstractSquareMatrix,
                                            Float[Array, 'D'],
                                            AbstractSquareMatrix]:
     return self.F, self.u, self.L

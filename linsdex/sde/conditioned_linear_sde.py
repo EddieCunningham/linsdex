@@ -71,15 +71,13 @@ class ConditionedLinearSDE(AbstractLinearSDE, AbstractContinuousCRF):
   def get_params(
     self,
     t: Scalar,
-    xt: Optional[Float[Array, 'D']] = None,
     *,
     messages: Optional[Messages] = None
   ) -> Tuple[Float[Array, 'D D'],
              Float[Array, 'D'],
              Float[Array, 'D D']]:
     t = jnp.array(t)
-    F, u, L = self.sde.get_params(t, xt)
-    # F, u, L = self.sde.F, self.sde.u, self.sde.L
+    F, u, L = self.sde.get_params(t)
     LLT = L@L.T
 
     # Discretize and then get the backward messages
