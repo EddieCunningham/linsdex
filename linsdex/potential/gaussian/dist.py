@@ -17,6 +17,7 @@ import linsdex.util as util
 from linsdex.matrix.tags import Tags, TAGS
 from plum import dispatch
 import jax.tree_util as jtu
+from linsdex.potential.gaussian.config import USE_CHOLESKY_SAMPLING
 
 __all__ = [
     'NaturalGaussian',
@@ -28,13 +29,64 @@ __all__ = [
     'gaussian_m_step'
 ]
 
-# Flag to control whether to use Cholesky factorization or SVD for sampling
-# _USE_CHOL = False
-_USE_CHOL = True
+################################################################################################################
+
+class AbstractGaussianPotential(AbstractPotential):
+  """Abstract base class for Gaussian potentials.
+
+  This class provides a common interface for Gaussian potentials, which are
+  used to represent Gaussian distributions in various forms.
+  """
+
+  @abc.abstractmethod
+  def __call__(self, x: PyTree) -> Scalar:
+    pass
+
+  def __add__(self, other: 'AbstractGaussianPotential') -> 'AbstractGaussianPotential':
+    pass
+
+  @abc.abstractmethod
+  def normalizing_constant(self) -> Scalar:
+    pass
+
+  @abc.abstractmethod
+  def log_prob(self, x: PyTree) -> Scalar:
+    pass
+
+  @abc.abstractmethod
+  def sample(self, key: PRNGKeyArray) -> PyTree:
+    pass
+
+  @classmethod
+  @abc.abstractmethod
+  def total_certainty_like(cls, x: Float[Array, 'D'], other: 'AbstractGaussianPotential') -> 'AbstractGaussianPotential':
+    pass
+
+  @classmethod
+  @abc.abstractmethod
+  def total_uncertainty_like(cls, other: 'AbstractGaussianPotential') -> 'AbstractGaussianPotential':
+    pass
+
+  @abc.abstractmethod
+  def sufficient_statistics(self, x: Float[Array, 'B D']) -> 'AbstractGaussianPotential':
+    pass
+
+  @auto_vmap
+  def integrate(self):
+    """Compute the value of \int exp{-0.5*x^T J x + x^T h - logZ} dx"""
+    return self.normalizing_constant() - self.logZ
+
+  @abc.abstractmethod
+  def score(self, x: Float[Array, 'D']) -> Float[Array, 'D']:
+    pass
+
+  @abc.abstractmethod
+  def get_noise(self, x: Float[Array, 'D']) -> Float[Array, 'D']:
+    pass
 
 ################################################################################################################
 
-class NaturalGaussian(AbstractPotential):
+class NaturalGaussian(AbstractGaussianPotential):
   """Gaussian distribution in natural parameter (information) form.
 
   Represents a Gaussian potential as exp{-0.5*x^T J x + x^T h - logZ}, where:
@@ -242,11 +294,6 @@ class NaturalGaussian(AbstractPotential):
     return -0.5*jnp.vdot(x, self.J@x) + jnp.vdot(self.h, x) - nc
 
   @auto_vmap
-  def integrate(self):
-    """Compute the value of \int exp{-0.5*x^T J x + x^T h - logZ} dx"""
-    return self.normalizing_constant() - self.logZ
-
-  @auto_vmap
   def score(self, x: Array) -> Array:
     """Score function of the Gaussian potential"""
     return self.h - self.J@x
@@ -268,7 +315,7 @@ class NaturalGaussian(AbstractPotential):
     eps = random.normal(key, self.h.shape)
     return self._sample(eps)
 
-  if _USE_CHOL:
+  if USE_CHOLESKY_SAMPLING:
 
     @auto_vmap
     def _sample(self, eps: Float[Array, 'D']) -> Float[Array, 'D']:
@@ -521,7 +568,7 @@ class NaturalJointGaussian(NaturalGaussian):
 
 ################################################################################################################
 
-class StandardGaussian(AbstractPotential):
+class StandardGaussian(AbstractGaussianPotential):
   """Gaussian distribution in standard (mean and covariance) form.
 
   Represents a Gaussian distribution N(μ, Σ) with mean vector μ and
@@ -747,17 +794,6 @@ class StandardGaussian(AbstractPotential):
     return -0.5*jnp.vdot(x, Sigma_inv_x) + jnp.vdot(self.mu, Sigma_inv_x) - nc
 
   @auto_vmap
-  def integrate(self):
-    """Compute the integral of the unnormalized density.
-
-    Calculates ∫ exp{-0.5*x^T Sigma^{-1} x + x^T Sigma^{-1}mu - logZ} dx
-
-    Returns:
-      The value of the integral as a scalar
-    """
-    return self.normalizing_constant() - self.logZ
-
-  @auto_vmap
   def score(self, x: Array) -> Array:
     """Compute the score function (gradient of log density).
 
@@ -789,7 +825,7 @@ class StandardGaussian(AbstractPotential):
     return self._sample(eps)
 
 
-  if _USE_CHOL:
+  if USE_CHOLESKY_SAMPLING:
     @auto_vmap
     def _sample(self, eps: Float[Array, 'D']):
       L = self.Sigma.get_cholesky()
@@ -824,7 +860,7 @@ class StandardGaussian(AbstractPotential):
 
 ################################################################################################################
 
-class MixedGaussian(AbstractPotential):
+class MixedGaussian(AbstractGaussianPotential):
   """Gaussian distribution in mixed parameter form.
 
   Represents a Gaussian distribution with mean vector μ and precision matrix J
@@ -1004,11 +1040,6 @@ class MixedGaussian(AbstractPotential):
     return -0.5*jnp.vdot(x, Jx) + jnp.vdot(self.mu, Jx) - nc
 
   @auto_vmap
-  def integrate(self):
-    """Compute the value of \int exp{-0.5*x^T Sigma^{-1} x + x^T Sigma^{-1}mu - logZ} dx"""
-    return self.normalizing_constant() - self.logZ
-
-  @auto_vmap
   def score(self, x: Array) -> Array:
     """Score function of the Gaussian potential"""
     return self.J@(self.mu - x)
@@ -1018,7 +1049,7 @@ class MixedGaussian(AbstractPotential):
     eps = random.normal(key, self.mu.shape)
     return self._sample(eps)
 
-  if _USE_CHOL:
+  if USE_CHOLESKY_SAMPLING:
 
     @auto_vmap
     def _sample(self, eps: Float[Array, 'D']):

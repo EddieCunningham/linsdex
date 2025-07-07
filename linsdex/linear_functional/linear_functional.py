@@ -40,6 +40,11 @@ class LinearFunctional(AbstractBatchableObject):
   def batch_size(self) -> Union[None,int,Tuple[int]]:
     return self.A.batch_size
 
+  @property
+  def shape(self):
+    """This is for compatability with code that expects a vector."""
+    return self.A.shape
+
   def __call__(self, x: Float[Array, 'D']) -> Float[Array, 'D']:
     return self.A@x + self.b
 
@@ -115,4 +120,6 @@ def mat_mul(A: AbstractSquareMatrix, B: LinearFunctional) -> LinearFunctional:
 
 @dispatch
 def matrix_solve(A: AbstractSquareMatrix, B: LinearFunctional) -> LinearFunctional:
-    return LinearFunctional(A.solve(B.A), A.solve(B.b))
+  Ab = A.solve(B.b)
+  Ab = util.where(A.tags.is_inf, jnp.zeros_like(Ab), Ab)
+  return LinearFunctional(A.solve(B.A), Ab)

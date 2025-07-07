@@ -19,7 +19,7 @@ import linsdex.util as util
 from linsdex.matrix.tags import Tags, TAGS
 from linsdex.util.parallel_scan import parallel_scan
 import jax.tree_util as jtu
-
+from linsdex.potential.gaussian.config import USE_CHOLESKY_SAMPLING
 
 __all__ = ['GaussianTransition',
            'max_likelihood_gaussian_transition',
@@ -310,12 +310,10 @@ def gaussian_chain_parallel_sample(transitions: GaussianTransition,
     def batch_size(self):
       return self.A.batch_size
 
-  _USE_CHOL = False # This global is in gaussian/dist.py as well.  Returns zeros if Sigma is 0 whereas cholesky returns inf.
-
   def make_elements(transition, key):
     eps = random.normal(key, transition.u.shape)
     v = transition.u
-    if _USE_CHOL:
+    if USE_CHOLESKY_SAMPLING:
       v += transition.Sigma.get_cholesky()@eps
     else:
       U, S, V = transition.Sigma.get_svd()

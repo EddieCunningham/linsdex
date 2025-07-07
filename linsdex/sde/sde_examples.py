@@ -33,6 +33,7 @@ __all__ = [
   "OrnsteinUhlenbeck",
   "VariancePreserving",
   "WienerVelocityModel",
+  "WienerAccelerationModel",
   "CriticallyDampedLangevinDynamics",
   "TOLD",
   "StochasticHarmonicOscillator",]
@@ -174,6 +175,37 @@ class WienerVelocityModel(AbstractLinearTimeInvariantSDE):
       sigma = jnp.pad(sigma, (1, 0))
       sigma = jnp.repeat(sigma, self.position_dim)
       self.L = DiagonalMatrix(sigma, tags=TAGS.no_tags)
+
+class WienerAccelerationModel(AbstractLinearTimeInvariantSDE):
+
+  F: Block3x3Matrix
+  L: DiagonalMatrix
+  position_dim: int = eqx.field(static=True)
+
+  def __init__(self,
+               sigma: Scalar,
+               position_dim: int):
+    self.position_dim = position_dim
+
+    # Build a block matrix with order x order blocks and to start
+    # make each block the identitiy matrix
+    I = jnp.eye(self.position_dim)
+    F = jnp.block([[I]*3]*3)
+
+    # Zero out everything that isn't the upper elements
+    F = jnp.triu(F, k=self.position_dim)
+    elements = jnp.zeros((3, 3, self.position_dim))
+    elements = elements.at[0,1,:].set(1.0)
+    elements = elements.at[1,2,:].set(1.0)
+    def make_block(elements):
+      return DiagonalMatrix(elements, tags=TAGS.no_tags)
+    F = jax.vmap(jax.vmap(make_block))(elements)
+    self.F = Block3x3Matrix(F, tags=TAGS.no_tags)
+
+    # Construct the diffusion matrix.  Place less noise on lower order terms
+    sigma_diag = jnp.zeros(self.F.shape[0])
+    sigma_diag = sigma_diag.at[-position_dim:].set(sigma)
+    self.L = DiagonalMatrix(sigma_diag, tags=TAGS.no_tags)
 
 class CriticallyDampedLangevinDynamics(AbstractLinearTimeInvariantSDE):
   """https://arxiv.org/pdf/2112.07068"""

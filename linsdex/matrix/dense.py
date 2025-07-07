@@ -138,8 +138,6 @@ def transpose(A: DenseMatrix) -> DenseMatrix:
 
 @dispatch
 def matrix_solve(A: DenseMatrix, B: DenseMatrix) -> DenseMatrix:
-  if jnp.all(A.tags.is_inf):
-    return jtu.tree_map(lambda x: jnp.zeros(x.shape, dtype=x.dtype), B)
   A_elements = A.elements
   out_elements = jnp.linalg.solve(A_elements, B.elements)
   out_tags = A.tags.solve_update(B.tags)
@@ -147,8 +145,6 @@ def matrix_solve(A: DenseMatrix, B: DenseMatrix) -> DenseMatrix:
 
 @dispatch
 def matrix_solve(A: DenseMatrix, b: Float[Array, 'N']) -> Float[Array, 'M']:
-  if jnp.all(A.tags.is_inf):
-    return jnp.zeros_like(b)
   return jnp.linalg.solve(A.elements, b)
 
 ################################################################################################################
