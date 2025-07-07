@@ -18,6 +18,9 @@ from linsdex.matrix.tags import Tags, TAGS
 from plum import dispatch
 import jax.tree_util as jtu
 from linsdex.potential.gaussian.config import USE_CHOLESKY_SAMPLING
+from linsdex.linear_functional.functional_ops import vdot
+from linsdex.linear_functional.linear_functional import LinearFunctional
+from linsdex.linear_functional.quadratic_form import QuadraticForm
 
 __all__ = [
     'NaturalGaussian',
@@ -105,14 +108,14 @@ class NaturalGaussian(AbstractGaussianPotential):
   """
 
   J: AbstractSquareMatrix
-  h: Float[Array, 'D']
-  logZ: Scalar
+  h: Union[Float[Array, 'D'], LinearFunctional]
+  logZ: Union[Scalar, QuadraticForm]
 
   def __init__(
     self,
     J: AbstractSquareMatrix,
-    h: Float[Array, 'D'],
-    logZ: Optional[Scalar] = None
+    h: Union[Float[Array, 'D'], LinearFunctional],
+    logZ: Optional[Union[Scalar, QuadraticForm]] = None
   ):
     """Initialize a Gaussian in natural parameter form.
 
@@ -254,14 +257,19 @@ class NaturalGaussian(AbstractGaussianPotential):
     dim = self.h.shape[0]
 
     # Formula: logZ = 0.5*h^T J^{-1} h - 0.5*log|J| + 0.5*d*log(2π)
-    logZ = 0.5*jnp.vdot(Jinv_h, self.h)
+    logZ = 0.5*vdot(Jinv_h, self.h)
     logZ -= 0.5*self.J.get_log_det()
     logZ += 0.5*dim*jnp.log(2*jnp.pi)
 
-    # Handle special case when J is zero (uniform distribution)
-    return util.where(self.J.is_zero,
-                      jnp.array(0.0),
+    # Handle special case when J is zero
+    if isinstance(logZ, QuadraticForm):
+      return util.where(self.J.is_zero,
+                      logZ*0.0,
                       logZ)
+    else:
+      return util.where(self.J.is_zero,
+                        jnp.array(0.0),
+                        logZ)
 
   @auto_vmap
   def __call__(self, x: Array):
@@ -276,7 +284,7 @@ class NaturalGaussian(AbstractGaussianPotential):
     Returns:
       Unnormalized log probability density at x
     """
-    return -0.5*jnp.vdot(x, self.J@x) + jnp.vdot(self.h, x) - self.logZ
+    return -0.5*vdot(x, self.J@x) + vdot(self.h, x) - self.logZ
 
   @auto_vmap
   def log_prob(self, x: Array):
@@ -291,7 +299,7 @@ class NaturalGaussian(AbstractGaussianPotential):
       Log probability density at x
     """
     nc = self.normalizing_constant()
-    return -0.5*jnp.vdot(x, self.J@x) + jnp.vdot(self.h, x) - nc
+    return -0.5*vdot(x, self.J@x) + vdot(self.h, x) - nc
 
   @auto_vmap
   def score(self, x: Array) -> Array:
@@ -351,6 +359,8 @@ class NaturalGaussian(AbstractGaussianPotential):
     J11 = DenseMatrix(J[:dim, :dim], tags=TAGS.no_tags)
     J12 = DenseMatrix(J[:dim, dim:], tags=TAGS.no_tags)
     J22 = DenseMatrix(J[dim:, dim:], tags=TAGS.no_tags)
+    if isinstance(self.h, LinearFunctional):
+      raise NotImplementedError("Cannot convert to joint form when h is a LinearFunctional.")
     h1 = self.h[:dim]
     h2 = self.h[dim:]
     return NaturalJointGaussian(J11, J12, J22, h1, h2, self.logZ)
@@ -497,7 +507,7 @@ class NaturalJointGaussian(NaturalGaussian):
     """p(y, x) -> p(x | y)"""
     Jy = self.J22
     hy = self.h2 - self.J21@y
-    logZy = self.logZ + 0.5*jnp.vdot(y, self.J11@y) - jnp.vdot(y, self.h1)
+    logZy = self.logZ + 0.5*vdot(y, self.J11@y) - vdot(y, self.h1)
     return NaturalGaussian(Jy, hy, logZy)
 
   @auto_vmap
@@ -584,15 +594,15 @@ class StandardGaussian(AbstractGaussianPotential):
     logZ: Log normalizing constant
   """
 
-  mu: Float[Array, 'D']
+  mu: Union[Float[Array, 'D'], LinearFunctional]
   Sigma: AbstractSquareMatrix
-  logZ: Scalar
+  logZ: Union[Scalar, QuadraticForm]
 
   def __init__(
     self,
-    mu: Float[Array, 'D'],
+    mu: Union[Float[Array, 'D'], LinearFunctional],
     Sigma: AbstractSquareMatrix,
-    logZ: Optional[Scalar] = None
+    logZ: Optional[Union[Scalar, QuadraticForm]] = None
   ):
     """Initialize a Gaussian in standard (mean and covariance) form.
 
@@ -766,16 +776,20 @@ class StandardGaussian(AbstractGaussianPotential):
     \int exp{-0.5*x^T Sigma^{-1} x + x^T Sigma^{-1}mu} dx. This is different
     than logZ which can be an arbitrary scalar."""
     covinv_mu = self.Sigma.solve(self.mu)
-    dim = self.mu.shape[0]
-    logZ = 0.5*jnp.vdot(covinv_mu, self.mu)
+    dim = self.mu.shape[-1]
+    logZ = 0.5*vdot(covinv_mu, self.mu)
     logZ += 0.5*self.Sigma.get_log_det()
     logZ += 0.5*dim*jnp.log(2*jnp.pi)
-    return util.where(self.Sigma.is_inf|self.Sigma.is_zero, jnp.array(0.0), logZ)
+
+    if isinstance(logZ, QuadraticForm):
+      return util.where(self.Sigma.is_inf|self.Sigma.is_zero, logZ * 0.0, logZ)
+    else:
+      return util.where(self.Sigma.is_inf|self.Sigma.is_zero, jnp.array(0.0), logZ)
 
   @auto_vmap
   def __call__(self, x: Array):
     Sigma_inv_x = self.Sigma.solve(x)
-    return -0.5*jnp.vdot(x, Sigma_inv_x) + jnp.vdot(self.mu, Sigma_inv_x) - self.logZ
+    return -0.5*vdot(x, Sigma_inv_x) + vdot(self.mu, Sigma_inv_x) - self.logZ
 
   @auto_vmap
   def log_prob(self, x: Float[Array, 'D']):
@@ -791,7 +805,7 @@ class StandardGaussian(AbstractGaussianPotential):
     """
     nc = self.normalizing_constant()
     Sigma_inv_x = self.Sigma.solve(x)
-    return -0.5*jnp.vdot(x, Sigma_inv_x) + jnp.vdot(self.mu, Sigma_inv_x) - nc
+    return -0.5*vdot(x, Sigma_inv_x) + vdot(self.mu, Sigma_inv_x) - nc
 
   @auto_vmap
   def score(self, x: Array) -> Array:
@@ -830,7 +844,7 @@ class StandardGaussian(AbstractGaussianPotential):
     def _sample(self, eps: Float[Array, 'D']):
       L = self.Sigma.get_cholesky()
       out = self.mu + L@eps
-      out = jnp.where(self.Sigma.is_zero, self.mu, out)
+      out = util.where(self.Sigma.is_zero, self.mu, out)
       return out
 
     @auto_vmap
@@ -845,7 +859,7 @@ class StandardGaussian(AbstractGaussianPotential):
     def _sample(self, eps: Float[Array, 'D']):
       U, Sinv, V = self.Sigma.get_svd()
       out = U@Sinv.get_cholesky()@eps + self.mu
-      out = jnp.where(self.Sigma.is_zero, self.mu, out)
+      out = util.where(self.Sigma.is_zero, self.mu, out)
       return out
 
     @auto_vmap
@@ -877,15 +891,15 @@ class MixedGaussian(AbstractGaussianPotential):
     logZ: Log normalizing constant
   """
 
-  mu: Float[Array, 'D']
+  mu: Union[Float[Array, 'D'], LinearFunctional]
   J: AbstractSquareMatrix
-  logZ: Scalar
+  logZ: Union[Scalar, QuadraticForm]
 
   def __init__(
     self,
-    mu: Float[Array, 'D'],
+    mu: Union[Float[Array, 'D'], LinearFunctional],
     J: AbstractSquareMatrix,
-    logZ: Optional[Scalar] = None
+    logZ: Optional[Union[Scalar, QuadraticForm]] = None
   ):
     """Initialize a Gaussian in mixed parameter form.
 
@@ -1021,23 +1035,26 @@ class MixedGaussian(AbstractGaussianPotential):
     \int exp{-0.5*x^T Sigma^{-1} x + x^T Sigma^{-1}mu} dx. This is different
     than logZ which can be an arbitrary scalar."""
     Jmu = self.J@self.mu
-    dim = self.mu.shape[0]
-    logZ = 0.5*jnp.vdot(Jmu, self.mu)
+    dim = self.mu.shape[-1]
+    logZ = 0.5*vdot(Jmu, self.mu)
     logZ -= 0.5*self.J.get_log_det()
     logZ += 0.5*dim*jnp.log(2*jnp.pi)
 
-    return util.where(self.J.is_inf|self.J.is_zero, jnp.array(0.0), logZ)
+    if isinstance(logZ, QuadraticForm):
+      return util.where(self.J.is_inf|self.J.is_zero, logZ * 0.0, logZ)
+    else:
+      return util.where(self.J.is_inf|self.J.is_zero, jnp.array(0.0), logZ)
 
   @auto_vmap
   def __call__(self, x: Array):
     Jx = self.J@x
-    return -0.5*jnp.vdot(x, Jx) + jnp.vdot(self.mu, Jx) - self.logZ
+    return -0.5*vdot(x, Jx) + vdot(self.mu, Jx) - self.logZ
 
   @auto_vmap
   def log_prob(self, x: Float[Array, 'D']):
     nc = self.normalizing_constant()
     Jx = self.J@x
-    return -0.5*jnp.vdot(x, Jx) + jnp.vdot(self.mu, Jx) - nc
+    return -0.5*vdot(x, Jx) + vdot(self.mu, Jx) - nc
 
   @auto_vmap
   def score(self, x: Array) -> Array:
@@ -1056,7 +1073,7 @@ class MixedGaussian(AbstractGaussianPotential):
       J = self.J# + self.J.eye(self.J.shape[0])*1e-6
       L_chol = J.get_cholesky()
       out = J.solve(L_chol@eps) + self.mu
-      out = jnp.where(self.J.is_inf, self.mu, out)
+      out = util.where(self.J.is_inf, self.mu, out)
       return out
 
     @auto_vmap
@@ -1070,7 +1087,7 @@ class MixedGaussian(AbstractGaussianPotential):
     def _sample(self, eps: Float[Array, 'D']):
       U, S, V = self.J.get_svd()
       out = U@S.get_cholesky().solve(eps) + self.mu
-      out = jnp.where(self.J.is_inf, self.mu, out)
+      out = util.where(self.J.is_inf, self.mu, out)
       return out
 
     @auto_vmap

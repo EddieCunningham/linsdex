@@ -43,7 +43,7 @@ class LinearFunctional(AbstractBatchableObject):
   @property
   def shape(self):
     """This is for compatability with code that expects a vector."""
-    return self.A.shape
+    return self.b.shape
 
   def __call__(self, x: Float[Array, 'D']) -> Float[Array, 'D']:
     return self.A@x + self.b

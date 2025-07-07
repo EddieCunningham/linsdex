@@ -3,8 +3,8 @@ import jax.numpy as jnp
 from plum import dispatch
 from jaxtyping import Array, Float
 
-from .linear_functional import LinearFunctional
-from .quadratic_form import QuadraticForm
+from linsdex.linear_functional.linear_functional import LinearFunctional
+from linsdex.linear_functional.quadratic_form import QuadraticForm
 
 __all__ = ['vdot']
 
