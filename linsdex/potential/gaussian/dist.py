@@ -262,14 +262,9 @@ class NaturalGaussian(AbstractGaussianPotential):
     logZ += 0.5*dim*jnp.log(2*jnp.pi)
 
     # Handle special case when J is zero
-    if isinstance(logZ, QuadraticForm):
-      return util.where(self.J.is_zero,
-                      logZ*0.0,
-                      logZ)
-    else:
-      return util.where(self.J.is_zero,
-                        jnp.array(0.0),
-                        logZ)
+    return util.where(self.J.is_zero,
+                    logZ*0.0,
+                    logZ)
 
   @auto_vmap
   def __call__(self, x: Array):
@@ -781,10 +776,7 @@ class StandardGaussian(AbstractGaussianPotential):
     logZ += 0.5*self.Sigma.get_log_det()
     logZ += 0.5*dim*jnp.log(2*jnp.pi)
 
-    if isinstance(logZ, QuadraticForm):
-      return util.where(self.Sigma.is_inf|self.Sigma.is_zero, logZ * 0.0, logZ)
-    else:
-      return util.where(self.Sigma.is_inf|self.Sigma.is_zero, jnp.array(0.0), logZ)
+    return util.where(self.Sigma.is_inf|self.Sigma.is_zero, logZ * 0.0, logZ)
 
   @auto_vmap
   def __call__(self, x: Array):
@@ -1040,10 +1032,7 @@ class MixedGaussian(AbstractGaussianPotential):
     logZ -= 0.5*self.J.get_log_det()
     logZ += 0.5*dim*jnp.log(2*jnp.pi)
 
-    if isinstance(logZ, QuadraticForm):
-      return util.where(self.J.is_inf|self.J.is_zero, logZ * 0.0, logZ)
-    else:
-      return util.where(self.J.is_inf|self.J.is_zero, jnp.array(0.0), logZ)
+    return util.where(self.J.is_inf|self.J.is_zero, logZ * 0.0, logZ)
 
   @auto_vmap
   def __call__(self, x: Array):

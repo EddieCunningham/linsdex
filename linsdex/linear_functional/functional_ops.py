@@ -2,11 +2,12 @@ import jax
 import jax.numpy as jnp
 from plum import dispatch
 from jaxtyping import Array, Float
-
+from typing import Union, Optional, Any
+from jaxtyping import Array, Float, Scalar, PyTree
 from linsdex.linear_functional.linear_functional import LinearFunctional
 from linsdex.linear_functional.quadratic_form import QuadraticForm
 
-__all__ = ['vdot']
+__all__ = ['vdot', 'resolve_functional']
 
 @dispatch
 def vdot(a, b):
@@ -37,3 +38,25 @@ def vdot(a: LinearFunctional, b: Float[Array, 'D']) -> QuadraticForm:
 def vdot(a: Float[Array, 'D'], b: LinearFunctional) -> QuadraticForm:
   """Computes the dot product of a vector and a LinearFunctional."""
   return vdot(b, a)
+
+def resolve_functional(pytree: PyTree, x: Float[Array, 'D']) -> PyTree:
+  """Recursively apply a vector `x` to all LinearFunctional leaves in a PyTree.
+
+  Args:
+    pytree: The PyTree to resolve.
+    x: The vector to apply to the LinearFunctional leaves.
+
+  Returns:
+    The resolved PyTree.
+  """
+  def is_leaf(obj: Any) -> bool:
+    return isinstance(obj, LinearFunctional) or isinstance(obj, QuadraticForm)
+
+  def resolve(obj: Any) -> Any:
+    if isinstance(obj, LinearFunctional):
+      return obj(x)
+    elif isinstance(obj, QuadraticForm):
+      return obj(x)
+    return obj
+
+  return jax.tree_util.tree_map(resolve, pytree, is_leaf=is_leaf)
