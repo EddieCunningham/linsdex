@@ -446,7 +446,7 @@ def _ode_sde_solve(sde: AbstractSDE,
   if params.using_constant_step_size():
     dt0 = (t1 - t0)/params.max_steps
   else:
-    dt0 = 0.01
+    dt0 = 0.01*jnp.sign(t1 - t0)
 
   terms, args = params.get_terms(sde, t0, t1, x0, key, dt0)
 
@@ -473,8 +473,10 @@ def _ode_sde_solve(sde: AbstractSDE,
   from linsdex.series.series import TimeSeries
   if isinstance(sol.ys, TimeSeries):
     out = sol.ys
-  else:
+  elif isinstance(sol.ys, jnp.ndarray):
     out = TimeSeries(save_times, sol.ys)
+  else:
+    out = sol.ys
   if return_solve_solution:
     updated_diffrax_solver_state = DiffraxSolverState(solver_state=sol.solver_state,
                                                       controller_state=sol.controller_state)

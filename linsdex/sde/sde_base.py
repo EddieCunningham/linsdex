@@ -64,9 +64,12 @@ class AbstractLinearSDE(AbstractSDE, abc.ABC):
     F, u, _ = self.get_params(t)
     return F@xt + u
 
-  def get_transition_distribution(self,
-                           s: Scalar,
-                           t: Scalar) -> GaussianTransition:
+  def get_transition_distribution(
+    self,
+    s: Scalar,
+    t: Scalar,
+    ode_solver_params: Optional['ODESolverParams'] = None,
+  ) -> GaussianTransition:
     """Get the transition parameters from time s to time t. See section
     6.1 of Särkkä's book (https://users.aalto.fi/~asolin/sde-book/sde-book.pdf)
     for the math details.  This class solves everything in reverse in order to
@@ -124,12 +127,14 @@ class AbstractLinearSDE(AbstractSDE, abc.ABC):
       return dytau_params
 
     # Solve the ODE backwards in time
-    from linsdex.sde.ode_sde_simulation import ode_solve
+    from linsdex.sde.ode_sde_simulation import ode_solve, ODESolverParams
     save_times = jnp.array([t, s])
-    y0_params = ode_solve(reverse_dynamics, yT_params, save_times)
+    if ode_solver_params is None:
+      ode_solver_params = ODESolverParams()
+    y0_params = ode_solve(reverse_dynamics, yT_params, save_times, params=ode_solver_params)
 
     # Extract the final time point and combine with the static data
-    y0_params = jax.tree_map(lambda x: x[-1], y0_params)
+    y0_params = jtu.tree_map(lambda x: x[-1], y0_params)
     y0 = eqx.combine(y0_params, yT_static)
     A, u, Sigma = y0
 
@@ -141,6 +146,11 @@ class AbstractLinearSDE(AbstractSDE, abc.ABC):
   def condition_on(self, evidence: GaussianPotentialSeries) -> 'ConditionedLinearSDE':
     from linsdex.sde.conditioned_linear_sde import ConditionedLinearSDE
     return ConditionedLinearSDE(self, evidence)
+
+  def condition_on_starting_point(self, t0: Scalar, x0: Float[Array, 'D']) -> 'ConditionedLinearSDE':
+    t0 = jnp.array(t0)
+    evidence = GaussianPotentialSeries(t0, x0)
+    return self.condition_on(evidence)
 
 ################################################################################################################
 

@@ -7,7 +7,9 @@ from jaxtyping import Array, Float, Scalar, PyTree
 from linsdex.linear_functional.linear_functional import LinearFunctional
 from linsdex.linear_functional.quadratic_form import QuadraticForm
 
-__all__ = ['vdot', 'resolve_functional']
+__all__ = ['vdot', 'zeros_like', 'resolve_functional']
+
+################################################################################################################
 
 @dispatch
 def vdot(a, b):
@@ -38,6 +40,22 @@ def vdot(a: LinearFunctional, b: Float[Array, 'D']) -> QuadraticForm:
 def vdot(a: Float[Array, 'D'], b: LinearFunctional) -> QuadraticForm:
   """Computes the dot product of a vector and a LinearFunctional."""
   return vdot(b, a)
+
+################################################################################################################
+
+@dispatch
+def zeros_like(a: Array) -> Array:
+  return jnp.zeros_like(a)
+
+@dispatch
+def zeros_like(a: LinearFunctional) -> LinearFunctional:
+  return LinearFunctional(a.A.zeros_like(a.A), jnp.zeros_like(a.b))
+
+@dispatch
+def zeros_like(a: QuadraticForm) -> QuadraticForm:
+  return QuadraticForm(a.A.zeros_like(a.A), jnp.zeros_like(a.b), jnp.zeros_like(a.c))
+
+################################################################################################################
 
 def resolve_functional(pytree: PyTree, x: Float[Array, 'D']) -> PyTree:
   """Recursively apply a vector `x` to all LinearFunctional leaves in a PyTree.

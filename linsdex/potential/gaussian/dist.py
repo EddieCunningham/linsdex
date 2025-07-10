@@ -18,7 +18,7 @@ from linsdex.matrix.tags import Tags, TAGS
 from plum import dispatch
 import jax.tree_util as jtu
 from linsdex.potential.gaussian.config import USE_CHOLESKY_SAMPLING
-from linsdex.linear_functional.functional_ops import vdot
+from linsdex.linear_functional.functional_ops import vdot, zeros_like
 from linsdex.linear_functional.linear_functional import LinearFunctional
 from linsdex.linear_functional.quadratic_form import QuadraticForm
 
@@ -698,8 +698,10 @@ class StandardGaussian(AbstractGaussianPotential):
     # return ExpectedSufficientStatisticsGaussian(self.mu, Xi, self.logZ)
 
   def cast(self, other: 'StandardGaussian'):
+    mu = self.mu + zeros_like(other.mu) # In case either is a linear functional
     cov = self.Sigma + other.Sigma.zeros_like(other.Sigma) # Correct type for covariance
-    return StandardGaussian(self.mu, cov, self.logZ)
+    logZ = self.logZ + zeros_like(other.logZ) # In case either is a quadratic form
+    return StandardGaussian(mu, cov, logZ)
 
   @auto_vmap
   @dispatch
@@ -989,8 +991,10 @@ class MixedGaussian(AbstractGaussianPotential):
     return self
 
   def cast(self, other: 'MixedGaussian'):
+    mu = self.mu + zeros_like(other.mu) # In case either is a linear functional
     J = self.J + other.J.zeros_like(other.J) # Correct type for covariance
-    return MixedGaussian(self.mu, J, self.logZ)
+    logZ = self.logZ + zeros_like(other.logZ) # In case either is a quadratic form
+    return MixedGaussian(mu, J, logZ)
 
   @auto_vmap
   @dispatch
