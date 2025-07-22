@@ -13,14 +13,14 @@ from linsdex.matrix.dense import DenseMatrix
 from linsdex.matrix.diagonal import DiagonalMatrix
 import warnings
 import abc
-from linsdex.potential.gaussian.dist import MixedGaussian, NaturalGaussian, StandardGaussian, NaturalJointGaussian, GaussianStatistics
+from linsdex.potential.gaussian.dist import AbstractGaussianPotential, MixedGaussian, NaturalGaussian, StandardGaussian, NaturalJointGaussian, GaussianStatistics
 from plum import dispatch
 import linsdex.util as util
 from linsdex.matrix.tags import Tags, TAGS
 from linsdex.util.parallel_scan import parallel_scan
 import jax.tree_util as jtu
 from linsdex.potential.gaussian.config import USE_CHOLESKY_SAMPLING
-from linsdex.linear_functional.functional_ops import vdot
+from linsdex.linear_functional.functional_ops import vdot, zeros_like
 from linsdex.linear_functional.linear_functional import LinearFunctional
 
 __all__ = ['GaussianTransition',
@@ -82,7 +82,7 @@ class GaussianTransition(AbstractTransition):
 
   @auto_vmap
   def marginalize_out_y(self) -> StandardGaussian:
-    zeromu = self.u*0.0
+    zeromu = zeros_like(self.u)
     zerocov = self.Sigma.zeros_like(self.Sigma)
     zerocov = zerocov.set_inf()
     nc = self.normalizing_constant()
@@ -97,7 +97,7 @@ class GaussianTransition(AbstractTransition):
     logZ += 0.5*self.Sigma.get_log_det()
     logZ += 0.5*dim*jnp.log(2*jnp.pi)
 
-    return util.where(self.Sigma.is_zero, logZ*0.0, logZ)
+    return util.where(self.Sigma.is_zero, zeros_like(logZ), logZ)
 
   @auto_vmap
   def __call__(self, y: Float[Array, 'Dy'], x: Float[Array, 'Dx']) -> Float[Array, '']:
@@ -116,7 +116,7 @@ class GaussianTransition(AbstractTransition):
     Sigmay = self.Sigma
 
     logZ = vdot(Ax, self.Sigma.solve(0.5*Ax + self.u))
-    logZ = util.where(self.Sigma.is_zero, logZ*0.0, logZ)
+    logZ = util.where(self.Sigma.is_zero, zeros_like(logZ), logZ)
     return StandardGaussian(muy, Sigmay, logZ + self.logZ)
 
   @auto_vmap
@@ -189,7 +189,7 @@ class GaussianTransition(AbstractTransition):
     Pbar = Ainv@Sigma_plus_Sigmax@Ainv.T
     Pbar = Pbar.set_symmetric()
     mbar = Ainv@(mux - u)
-    mbar = util.where(Sigmax.tags.is_inf, mbar*0.0, mbar)
+    mbar = util.where(Sigmax.tags.is_inf, zeros_like(mbar), mbar)
 
     new_prior = StandardGaussian(mbar, Pbar, logZx)
     return JointPotential(new_transition, new_prior)
@@ -233,7 +233,7 @@ class GaussianTransition(AbstractTransition):
     Jbar = Jbar.set_symmetric()
     Ainv = self.A.get_inverse() # Get this for free in LTI-SDEs
     mbar = Ainv@(muy - u)
-    mbar = util.where(Jy.tags.is_zero, mbar*0.0, mbar)
+    mbar = util.where(Jy.tags.is_zero, zeros_like(mbar), mbar)
 
     new_prior = MixedGaussian(mbar, Jbar, logZy)
     return JointPotential(new_transition, new_prior)
@@ -290,6 +290,31 @@ class GaussianTransition(AbstractTransition):
     h2 = -self.A.T@h1
     return NaturalJointGaussian(J11, J12, J22, h1, h2, self.logZ)
 
+  def update_and_marginalize_out_x(self, potential: AbstractGaussianPotential) -> AbstractGaussianPotential:
+    std_potential = potential.to_std()
+    mu, Sigma = std_potential.mu, std_potential.Sigma
+
+    new_mean = self.A@mu + self.u
+    new_cov = self.Sigma + self.A@Sigma@self.A.T
+    new_cov = new_cov.set_symmetric()
+
+    # The new distribution is normalized, so just add a correction term
+    new_dist = StandardGaussian(new_mean, new_cov)
+
+    correction = potential.logZ - potential.normalizing_constant()
+    correction += self.logZ - self.normalizing_constant()
+    logZ = new_dist.logZ + correction
+    out_std = StandardGaussian(new_mean, new_cov, logZ)
+
+    if isinstance(potential, StandardGaussian):
+      return out_std
+    elif isinstance(potential, NaturalGaussian):
+      return out_std.to_nat()
+    elif isinstance(potential, MixedGaussian):
+      return out_std.to_mixed()
+    else:
+      raise ValueError(f"Unknown potential type: {type(potential)}")
+
 ################################################################################################################
 
 def gaussian_chain_parallel_sample(transitions: GaussianTransition,
@@ -324,7 +349,7 @@ def gaussian_chain_parallel_sample(transitions: GaussianTransition,
     return Elements(transition.A, v)
   elements = jax.vmap(make_elements)(transitions, keys)
   A0 = elements[0].A
-  I, zero = A0.eye(A0.shape[-1]), x0*0.0
+  I, zero = A0.eye(A0.shape[-1]), zeros_like(x0)
   elements = jtu.tree_map(lambda x, y: jnp.concatenate([x[None], y], axis=0), Elements(I, zero), elements)
 
   def chain(left, right):

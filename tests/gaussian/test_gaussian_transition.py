@@ -281,6 +281,49 @@ class TestGaussianTransition(unittest.TestCase):
 
     self.assertTrue(jnp.allclose(log_prob_transition, log_prob_comp))
 
+  def test_update_and_marginalize_out_x_equivalence(self):
+    """Test that the simplified update_and_marginalize_out_x gives same result as parent implementation."""
+    transition = self.make_transition()
+    potential = self.make_potential()
+
+    # Get result from the simplified implementation (current override)
+    result_simplified = transition.update_and_marginalize_out_x(potential)
+
+    # Get result from the standard parent implementation
+    # We call the parent method by using the swap/update/marginalize pattern directly
+    result_standard = transition.swap_variables().update_and_marginalize_out_y(potential)
+
+    # Both results should be StandardGaussian
+    self.assertIsInstance(result_simplified, StandardGaussian)
+    self.assertIsInstance(result_standard, StandardGaussian)
+
+    # The results should be equivalent
+    self.assertTrue(jnp.allclose(result_simplified.mu, result_standard.mu, atol=1e-10, rtol=1e-10))
+    self.assertTrue(jnp.allclose(
+      result_simplified.Sigma.as_matrix(),
+      result_standard.Sigma.as_matrix(),
+      atol=1e-10, rtol=1e-10
+    ))
+    self.assertTrue(jnp.allclose(result_simplified.logZ, result_standard.logZ, atol=1e-10, rtol=1e-10))
+
+    # Test with different potential types
+    for potential_type in ['nat', 'mixed']:
+      potential_alt = self.make_potential(potential_type=potential_type)
+      result_simplified_alt = transition.update_and_marginalize_out_x(potential_alt)
+      result_standard_alt = transition.swap_variables().update_and_marginalize_out_y(potential_alt)
+
+      # Convert both results to standard form for comparison
+      result_simplified_std = result_simplified_alt.to_std()
+      result_standard_std = result_standard_alt.to_std()
+
+      self.assertTrue(jnp.allclose(result_simplified_std.mu, result_standard_std.mu, atol=1e-10, rtol=1e-10))
+      self.assertTrue(jnp.allclose(
+        result_simplified_std.Sigma.as_matrix(),
+        result_standard_std.Sigma.as_matrix(),
+        atol=1e-10, rtol=1e-10
+      ))
+      self.assertTrue(jnp.allclose(result_simplified_std.logZ, result_standard_std.logZ, atol=1e-10, rtol=1e-10))
+
 
 class TestMaxLikelihoodEstimation(unittest.TestCase):
   """Test maximum likelihood estimation for Gaussian transitions."""
