@@ -131,6 +131,45 @@ class TestLinearFunctional:
     original_val = lf(x)
     assert jnp.allclose(reconstructed_val, original_val, atol=1e-5)
 
+  def test_get_inverse(self, matrix_type):
+    """Test the get_inverse method for correctness."""
+    key = random.PRNGKey(6)
+    dim = 2
+    k1, k2, k3 = random.split(key, 3)
+
+    # Create an invertible matrix - for diagonal, ensure non-zero diagonal elements
+    if matrix_type == "dense":
+      A = create_matrix(k1, dim, "dense")
+    else:  # diagonal
+      diag_vals = random.normal(k1, (dim,))
+      diag_vals = jnp.where(jnp.abs(diag_vals) < 1e-3, 1.0, diag_vals)  # Ensure non-zero
+      A = DiagonalMatrix(diag_vals)
+
+    b = random.normal(k2, (dim,))
+    lf = LinearFunctional(A, b)
+
+    # Get the inverse
+    lf_inv = lf.get_inverse()
+
+    # Test that inverse(f(x)) = x
+    x = random.normal(k3, (dim,))
+    y = lf(x)
+    x_recovered = lf_inv(y)
+    assert jnp.allclose(x_recovered, x, atol=1e-5)
+
+    # Test that f(inverse(y)) = y
+    y_test = random.normal(random.split(k3)[1], (dim,))
+    x_from_y = lf_inv(y_test)
+    y_recovered = lf(x_from_y)
+    assert jnp.allclose(y_recovered, y_test, atol=1e-5)
+
+    # Test mathematical properties: if f(x) = Ax + b, then f^{-1}(y) = A^{-1}y - A^{-1}b
+    A_inv_expected = A.get_inverse()
+    b_inv_expected = -A_inv_expected @ b
+
+    assert jnp.allclose(lf_inv.A.as_matrix(), A_inv_expected.as_matrix(), atol=1e-5)
+    assert jnp.allclose(lf_inv.b, b_inv_expected, atol=1e-5)
+
 
 class TestLinearFunctionalWithSymbolicMatrices:
   def test_zero_matrix_multiplication(self):

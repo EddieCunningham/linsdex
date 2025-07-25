@@ -93,6 +93,20 @@ class LinearFunctional(AbstractBatchableObject):
   def __rmatmul__(self, other: AbstractSquareMatrix) -> 'LinearFunctional':
     return LinearFunctional(other @ self.A, other @ self.b)
 
+  @auto_vmap
+  def get_inverse(self) -> 'LinearFunctional':
+    """Get the inverse linear functional.
+
+    If this represents f(x) = Ax + b, then the inverse represents
+    g(y) = A^{-1}y - A^{-1}b such that g(f(x)) = x.
+
+    Returns:
+      LinearFunctional: The inverse linear functional.
+    """
+    A_inv = self.A.get_inverse()
+    b_inv = -A_inv @ self.b
+    return LinearFunctional(A_inv, b_inv)
+
 
 def resolve_linear_functional(pytree: PyTree, x: Float[Array, 'D']) -> PyTree:
   """Apply x to the leaves of pytree that are LinearFunctional objects.
