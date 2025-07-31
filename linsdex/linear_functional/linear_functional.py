@@ -45,8 +45,23 @@ class LinearFunctional(AbstractBatchableObject):
     """This is for compatability with code that expects a vector."""
     return self.b.shape
 
+  @auto_vmap
+  @dispatch
   def __call__(self, x: Float[Array, 'D']) -> Float[Array, 'D']:
     return self.A@x + self.b
+
+  @auto_vmap
+  @dispatch
+  def __call__(self, other: "LinearFunctional") -> "LinearFunctional":
+    """Compose this linear functional with another one.
+
+    If this represents f(x) = Ax + b and other represents g(x) = Cx + d,
+    this returns a new linear functional representing f(g(x)).
+    f(g(x)) = A(Cx + d) + b = (AC)x + (Ad + b)
+    """
+    new_A = self.A @ other.A
+    new_b = self.A @ other.b + self.b
+    return LinearFunctional(new_A, new_b)
 
   @auto_vmap
   @dispatch

@@ -489,6 +489,8 @@ def _ode_sde_solve(sde: AbstractSDE,
 class DummySDE(AbstractSDE):
 
   flow_function: Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']]
+  drift_function: Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']]
+  diffusion_function: Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']]
 
   @property
   def batch_size(self) -> Union[None,int,Tuple[int]]:
@@ -498,10 +500,10 @@ class DummySDE(AbstractSDE):
     return self.flow_function(t, xt)
 
   def get_drift(self, t: Scalar,  xt: Float[Array, 'D']) -> Float[Array, 'D']:
-    raise NotImplementedError("get_drift() does not apply to DummySDE class")
+    return self.drift_function(t, xt)
 
   def get_diffusion_coefficient(self, t: Scalar, xt: Float[Array, 'D']):
-    raise NotImplementedError("get_diffusion_coefficient() does not apply to DummySDE class")
+    return self.diffusion_function(t, xt)
 
 def ode_solve(sde: Union[AbstractSDE, Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']]],
               x0: PyTree,
@@ -533,11 +535,11 @@ def ode_solve(sde: Union[AbstractSDE, Callable[[Scalar, Float[Array, 'D']], Floa
   if isinstance(sde, AbstractSDE):
     pass
   else:
-    sde = DummySDE(sde)
+    sde = DummySDE(sde, None, None)
 
   return _ode_sde_solve(sde, x0, None, save_times, params, diffrax_solver_state, return_solve_solution)
 
-def sde_sample(sde: AbstractSDE,
+def sde_sample(sde: Union[AbstractSDE, Tuple[Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']], Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']], Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']]]],
                x0: Array,
                key: PRNGKeyArray,
                save_times: Array,
@@ -566,4 +568,10 @@ def sde_sample(sde: AbstractSDE,
   - TimeSeries: The sampled trajectory at the save times
   - (Optional) diffrax.Solution: The full diffrax solution object if return_solve_solution=True
   """
+  if isinstance(sde, AbstractSDE):
+    pass
+  else:
+    drift_fn, diffusion_fn = sde
+    sde = DummySDE(None, drift_fn, diffusion_fn)
+
   return _ode_sde_solve(sde, x0, key, save_times, params, diffrax_solver_state, return_solve_solution)

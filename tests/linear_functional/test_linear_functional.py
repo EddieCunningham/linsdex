@@ -171,6 +171,30 @@ class TestLinearFunctional:
     assert jnp.allclose(lf_inv.b, b_inv_expected, atol=1e-5)
 
 
+  def test_composition(self, matrix_type):
+    """Test composition of two LinearFunctional objects."""
+    key = random.PRNGKey(7)
+    dim = 3
+    k1, k2, k3 = random.split(key, 3)
+    lf1 = create_functional(k1, dim, matrix_type)
+    lf2 = create_functional(k2, dim, matrix_type)
+
+    # f1(f2(x))
+    lf_composed = lf1(lf2)
+
+    # Test the new A and b matrices
+    expected_A = lf1.A @ lf2.A
+    expected_b = lf1.A @ lf2.b + lf1.b
+    assert jnp.allclose(lf_composed.A.as_matrix(), expected_A.as_matrix())
+    assert jnp.allclose(lf_composed.b, expected_b)
+
+    # Test that lf_composed(x) == lf1(lf2(x))
+    x = random.normal(k3, (dim,))
+    composed_eval = lf_composed(x)
+    sequential_eval = lf1(lf2(x))
+    assert jnp.allclose(composed_eval, sequential_eval)
+
+
 class TestLinearFunctionalWithSymbolicMatrices:
   def test_zero_matrix_multiplication(self):
     """Test multiplication by a symbolic zero matrix."""
