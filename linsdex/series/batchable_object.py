@@ -4,6 +4,7 @@ from functools import partial
 from typing import TypeVar, Generic, Optional, Mapping, Tuple, Sequence, Union, Any, Callable, Literal, Annotated
 import equinox as eqx
 from jaxtyping import Array, PRNGKeyArray, Float, Scalar, Bool, PyTree, Int
+from functools import wraps
 import abc
 import jax.tree_util as jtu
 
@@ -34,6 +35,7 @@ def auto_vmap(f):
         # Will automatically handle batched inputs
     ```
   """
+  @wraps(f)
   def f_wrapper(self, *args, **kwargs):
     if self.batch_size:
       return eqx.filter_vmap(lambda s, a: f_wrapper(s, *a, **kwargs))(self, args)

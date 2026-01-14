@@ -11,6 +11,7 @@ import plum
 from jaxtyping import Array, PRNGKeyArray, Float, Scalar, PyTree
 from linsdex.sde.sde_base import AbstractSDE
 from linsdex.series.series import TimeSeries
+from linsdex.matrix.matrix_base import AbstractSquareMatrix
 import abc
 
 """
@@ -157,7 +158,7 @@ class ODESolverParams(AbstractSolverParams):
   stepsize_controller: str = 'pid'
   max_steps: int = 8192
   throw: bool = True
-  progress_meter: str = 'tqdm'
+  progress_meter: str = 'none'
 
   def get_solver(self) -> diffrax.AbstractSolver:
     """
@@ -539,7 +540,7 @@ def ode_solve(sde: Union[AbstractSDE, Callable[[Scalar, Float[Array, 'D']], Floa
 
   return _ode_sde_solve(sde, x0, None, save_times, params, diffrax_solver_state, return_solve_solution)
 
-def sde_sample(sde: Union[AbstractSDE, Tuple[Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']], Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']], Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']]]],
+def sde_sample(sde: Union[AbstractSDE, Tuple[Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']], Callable[[Scalar, Float[Array, 'D']], AbstractSquareMatrix]]],
                x0: Array,
                key: PRNGKeyArray,
                save_times: Array,

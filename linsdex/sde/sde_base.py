@@ -97,32 +97,32 @@ class AbstractLinearSDE(AbstractSDE, abc.ABC):
     I = (F.T@L).set_eye() # Initialize with identity matrix.  Do it this way to get the right data type
 
     D = self.dim
-    psi_TT = I # Initialize with identity matrix
+    A_TT = I # Initialize with identity matrix
     uT = jnp.zeros(D)
     SigmaT = I.set_zero() # Initialize with 0 matrix
 
     # Remove the tags from the matrices so that we avoid symbolic computation
-    psi_TT = eqx.tree_at(lambda x: x.tags, psi_TT, TAGS.no_tags)
+    A_TT = eqx.tree_at(lambda x: x.tags, A_TT, TAGS.no_tags)
     SigmaT = eqx.tree_at(lambda x: x.tags, SigmaT, TAGS.no_tags)
 
     # Initialize the ODE state
-    yT = (psi_TT, uT, SigmaT)
+    yT = (A_TT, uT, SigmaT)
 
     # The ODE solver should not try to update the tags, so need to partition
     yT_params, yT_static = eqx.partition(yT, eqx.is_inexact_array)
 
     def reverse_dynamics(tau, ytau_params):
       ytau = eqx.combine(ytau_params, yT_static)
-      psi_Ttau, _, _ = ytau
+      A_Ttau, _, _ = ytau
 
       Ftau, utau, L = self.get_params(tau)
       LLT = L@L.T
 
-      dpsi_Ttau = -psi_Ttau@Ftau
-      du = -psi_Ttau@utau # The negative sign comes from reversing the ODE
-      dSigma = -psi_Ttau@LLT@psi_Ttau.T # The negative sign comes from reversing the ODE
+      dA_Ttau = -A_Ttau@Ftau
+      du = -A_Ttau@utau # The negative sign comes from reversing the ODE
+      dSigma = -A_Ttau@LLT@A_Ttau.T # The negative sign comes from reversing the ODE
 
-      dytau = (dpsi_Ttau, du, dSigma)
+      dytau = (dA_Ttau, du, dSigma)
       dytau_params, _ = eqx.partition(dytau, eqx.is_inexact_array)
       return dytau_params
 
@@ -235,6 +235,9 @@ class AbstractLinearTimeInvariantSDE(AbstractLinearSDE, abc.ABC):
       F, L = self.F.as_matrix(), self.L.as_matrix()
       X = jnp.block([[F, L@L.T], [zero, -F.T]])*dt
       Phi = jax.scipy.linalg.expm(X)
+
+      if jnp.iscomplexobj(Phi):
+        Phi = Phi.real
 
       A = Phi[:D,:D] # Top left
       Sigma_AinvT = Phi[:D,D:] # Top right
