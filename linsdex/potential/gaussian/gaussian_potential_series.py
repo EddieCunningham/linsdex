@@ -42,8 +42,9 @@ def _process_potentials(
       - Batched AbstractPotential
     """
     if certainty is not None:
-      if xts.shape != certainty.shape:
-        raise ValueError("xts and certainty must have the same shape")
+      certainty = jnp.broadcast_to(certainty, xts.shape)
+    if standard_deviation is not None:
+      standard_deviation = jnp.broadcast_to(standard_deviation, xts.shape)
     if ts.shape != xts.shape[:-1]:
       raise ValueError("ts must have the same shape as xts except for the last dimension")
 
@@ -161,8 +162,9 @@ class GaussianPotentialSeries(AbstractBatchableObject):
       return
 
     if certainty is not None:
-      if xts.shape != certainty.shape:
-        raise ValueError("xts and certainty must have the same shape")
+      certainty = jnp.broadcast_to(certainty, xts.shape)
+    if standard_deviation is not None:
+      standard_deviation = jnp.broadcast_to(standard_deviation, xts.shape)
     if ts.shape != xts.shape[:-1]:
       raise ValueError("ts must have the same shape as xts except for the last dimension")
 

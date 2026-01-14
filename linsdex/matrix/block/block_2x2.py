@@ -370,7 +370,9 @@ def get_matrix_inverse(A: Block2x2Matrix) -> Block2x2Matrix:
 ################################################################################################################
 
 @dispatch
-def get_log_det(A: Block2x2Matrix) -> Scalar:
+def get_log_det(A: Block2x2Matrix, mask: Optional[Bool[Array, 'D']] = None) -> Scalar:
+  if mask is not None:
+    raise NotImplementedError("Masked log determinant not implemented for Block2x2Matrix")
   a, b, c, d = A.matrices[0,0], A.matrices[0,1], A.matrices[1,0], A.matrices[1,1]
   s = (d - c@a.solve(b))
   return a.get_log_det() + s.get_log_det()

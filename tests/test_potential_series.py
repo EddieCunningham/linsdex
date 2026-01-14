@@ -245,7 +245,7 @@ class TestPotentialSeries:
     # Test mismatched shapes
     wrong_certainty = jnp.array([[1.0, 2.0], [3.0, 4.0]])  # Wrong shape
 
-    with pytest.raises(ValueError, match="xts and certainty must have the same shape"):
+    with pytest.raises(ValueError, match="Incompatible shapes for broadcasting"):
       GaussianPotentialSeries(ts=times, xts=values, certainty=wrong_certainty)
 
     # Test invalid parameterization

@@ -186,8 +186,11 @@ def get_matrix_inverse(A: DiagonalMatrix) -> DiagonalMatrix:
   return DiagonalMatrix(out_elements, tags=out_tags).fix_to_tags()
 
 @dispatch
-def get_log_det(A: DiagonalMatrix) -> Scalar:
-  return jnp.sum(jnp.log(jnp.abs(A.elements)))
+def get_log_det(A: DiagonalMatrix, mask: Optional[Bool[Array, 'D']] = None) -> Scalar:
+  elements = A.elements
+  if mask is not None:
+    elements = jnp.where(mask, elements, 1.0)
+  return jnp.sum(jnp.log(jnp.abs(elements)))
 
 @dispatch
 def get_cholesky(A: DiagonalMatrix) -> DiagonalMatrix:

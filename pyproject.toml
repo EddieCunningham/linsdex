@@ -1,6 +1,39 @@
 [build-system]
-requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "linsdex"
+version = "0.1.0"
+description = "Inference in LTI-SDEs using CRFs"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Edmond Cunningham", email = "edmondcunnin@cs.umass.edu" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "jax",
+    "einops",
+    "equinox",
+    "diffrax",
+    "pytest",
+    "matplotlib",
+    "jaxtyping",
+    "ml-dtypes",
+    "numpy",
+    "plum-dispatch",
+    "wadler_lindig",
+    "tqdm",
+    "scipy",
+]
+
+[tool.setuptools]
+packages = ["linsdex"]
 
 [tool.black]
 line-length = 88

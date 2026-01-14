@@ -158,7 +158,9 @@ def get_matrix_inverse(A: DenseMatrix) -> DenseMatrix:
 ################################################################################################################
 
 @dispatch
-def get_log_det(A: DenseMatrix) -> Scalar:
+def get_log_det(A: DenseMatrix, mask: Optional[Bool[Array, 'D']] = None) -> Scalar:
+  if mask is not None:
+    raise NotImplementedError("Masked log determinant not implemented for DenseMatrix")
   return jnp.linalg.slogdet(A.elements)[1]
 
 ################################################################################################################

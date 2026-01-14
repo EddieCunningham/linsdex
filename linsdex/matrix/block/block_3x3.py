@@ -394,7 +394,9 @@ def get_matrix_inverse(A: Block3x3Matrix) -> Block3x3Matrix:
 ################################################################################################################
 
 @dispatch
-def get_log_det(A: Block3x3Matrix) -> Scalar:
+def get_log_det(A: Block3x3Matrix, mask: Optional[Bool[Array, 'D']] = None) -> Scalar:
+  if mask is not None:
+    raise NotImplementedError("Masked log determinant not implemented for Block3x3Matrix")
   # Extract block components
   A11, A12, A13 = A.matrices[0,0], A.matrices[0,1], A.matrices[0,2]
   A21, A22, A23 = A.matrices[1,0], A.matrices[1,1], A.matrices[1,2]
