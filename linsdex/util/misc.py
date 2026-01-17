@@ -64,8 +64,26 @@ def w2_distance(gaussian1: 'AbstractSquareMatrix',
 ################################################################################################################
 
 def where(cond: Bool, true: PyTree, false: PyTree) -> Any:
-  # return jax.lax.cond(cond, lambda: true, lambda: false)
-  return jtu.tree_map(lambda x, y: jnp.where(cond, x, y), true, false)
+  from linsdex.linear_functional.linear_functional import LinearFunctional
+  from linsdex.linear_functional.quadratic_form import QuadraticForm
+
+  functional_types = (LinearFunctional, QuadraticForm)
+  def is_functional(x):
+    return isinstance(x, functional_types)
+
+  def align_and_where(x, y):
+    if type(x) != type(y):
+      if isinstance(x, functional_types):
+        y = x.zeros_like(x) + y
+      elif isinstance(y, functional_types):
+        x = y.zeros_like(y) + x
+
+    if isinstance(x, functional_types):
+      return jtu.tree_map(lambda a, b: jnp.where(cond, a, b), x, y)
+    else:
+      return jnp.where(cond, x, y)
+
+  return jtu.tree_map(align_and_where, true, false, is_leaf=is_functional)
 
 ################################################################################################################
 

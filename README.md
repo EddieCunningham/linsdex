@@ -121,8 +121,6 @@ Linear SDEs are models with time-varying coefficients, such as `VariancePreservi
 
 Conditioned SDEs allow for conditioning a process on any number of Gaussian potentials using `ConditionedLinearSDE`.
 
-Forward SDEs represent a process that transforms a sample from an unknown distribution toward a Gaussian prior. The `ForwardSDE` class is essential for diffusion-based generative modeling.
-
 #### Diffusion Conversions
 
 `linsdex` provides a unified interface for working with different mathematical representations of a diffusion process. They allow for mapping between neural network predictions (such as the clean data $y_1$) and quantities required for sampling (such as the probability flow or the drift of an SDE).

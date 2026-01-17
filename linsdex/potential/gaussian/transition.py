@@ -22,6 +22,7 @@ import jax.tree_util as jtu
 from linsdex.potential.gaussian.config import USE_CHOLESKY_SAMPLING
 from linsdex.linear_functional.functional_ops import vdot, zeros_like
 from linsdex.linear_functional.linear_functional import LinearFunctional
+from linsdex.linear_functional.quadratic_form import QuadraticForm
 
 __all__ = ['GaussianTransition',
            'max_likelihood_gaussian_transition',
@@ -34,13 +35,13 @@ class GaussianTransition(AbstractTransition):
   A: AbstractSquareMatrix
   u: Union[Float[Array, 'D'], LinearFunctional]
   Sigma: AbstractSquareMatrix
-  logZ: Float[Array, '']
+  logZ: Union[Float[Array, ''], QuadraticForm]
 
   def __init__(self,
     A: AbstractSquareMatrix,
     u: Union[Float[Array, 'D'], LinearFunctional],
     Sigma: AbstractSquareMatrix,
-    logZ: Optional[Float[Array, '']] = None
+    logZ: Optional[Union[Float[Array, ''], QuadraticForm]] = None
   ):
     self.A = A
     self.u = u

@@ -49,9 +49,9 @@ class TestODESolverParams:
     assert params.solver == 'dopri5'
     assert params.adjoint == 'recursive_checkpoint'
     assert params.stepsize_controller == 'pid'
-    assert params.max_steps == 8192
+    assert params.max_steps == 65536
     assert params.throw is True
-    assert params.progress_meter == 'tqdm'
+    assert params.progress_meter == 'none'
 
   def test_custom_initialization(self):
     """Test custom parameter values"""
@@ -168,7 +168,7 @@ class TestSDESolverParams:
     assert params.solver == 'shark'
     assert params.adjoint == 'recursive_checkpoint'
     assert params.stepsize_controller == 'none'
-    assert params.max_steps == 8192
+    assert params.max_steps == 65536
     assert params.throw is True
     assert params.progress_meter == 'none'
     assert params.brownian_simulation_type == 'virtual'
@@ -266,8 +266,8 @@ class TestODESolve:
     result, solution = ode_solve(dynamics, x0, save_times, return_solve_solution=True)
 
     assert isinstance(result, TimeSeries)
-    # solution should be a diffrax.Solution object (can't test exact type without diffrax import)
-    assert solution is not None
+    assert isinstance(solution, DiffraxSolverState)
+    # Some solvers might have None solver_state, but solution itself should be a DiffraxSolverState
 
 
 class TestSDESample:
@@ -349,7 +349,8 @@ class TestSDESample:
     result, solution = sde_sample(sde, x0, key, save_times, return_solve_solution=True)
 
     assert isinstance(result, TimeSeries)
-    assert solution is not None
+    assert isinstance(solution, DiffraxSolverState)
+    # Some solvers might have None solver_state, but solution itself should be a DiffraxSolverState
 
 
 class TestConvergence:

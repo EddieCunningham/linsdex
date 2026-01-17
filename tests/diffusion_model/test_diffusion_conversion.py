@@ -16,6 +16,10 @@ from jaxtyping import Array, PRNGKeyArray, Float
 import jax.tree_util as jtu
 from functools import partial
 import diffrax
+from linsdex.sde.sde_base import AbstractLinearSDE
+from linsdex.linear_functional.linear_functional import LinearFunctional
+from linsdex.linear_functional.functional_ops import resolve_functional
+from linsdex.matrix.matrix_base import AbstractSquareMatrix
 
 
 @pytest.fixture
@@ -229,6 +233,99 @@ class TestDiffusionHubConversions:
 
         assert jnp.allclose(score, score_recon, atol=1e-5)
 
+    def test_epsilon_bwd_message_conversion(self, components_fixture, request, key):
+        """Test epsilon <-> backward message conversion."""
+        diffusion_components = request.getfixturevalue(components_fixture)
+        k1, k2 = random.split(key)
+        dim = diffusion_components.linear_sde.dim
+        xt = random.normal(k1, (dim,))
+        epsilon = random.normal(k2, (dim,))
+        t = 0.5
+        conversions = DiffusionModelConversions(diffusion_components, t)
+
+        bwd_message = conversions.epsilon_to_bwd_message(xt, epsilon)
+        epsilon_recon = conversions.bwd_message_to_epsilon(xt, bwd_message)
+
+        assert jnp.allclose(epsilon, epsilon_recon, atol=1e-5)
+
+    def test_epsilon_drift_conversion(self, components_fixture, request, key):
+        """Test epsilon <-> drift conversion."""
+        diffusion_components = request.getfixturevalue(components_fixture)
+        k1, k2 = random.split(key)
+        dim = diffusion_components.linear_sde.dim
+        xt = random.normal(k1, (dim,))
+        epsilon = random.normal(k2, (dim,))
+        t = 0.5
+        conversions = DiffusionModelConversions(diffusion_components, t)
+
+        drift = conversions.epsilon_to_drift(xt, epsilon)
+        epsilon_recon = conversions.drift_to_epsilon(xt, drift)
+
+        assert jnp.allclose(epsilon, epsilon_recon, atol=1e-5)
+
+    def test_epsilon_score_conversion(self, components_fixture, request, key):
+        """Test epsilon <-> score conversion."""
+        diffusion_components = request.getfixturevalue(components_fixture)
+        k1, k2 = random.split(key)
+        dim = diffusion_components.linear_sde.dim
+        xt = random.normal(k1, (dim,))
+        epsilon = random.normal(k2, (dim,))
+        t = 0.5
+        conversions = DiffusionModelConversions(diffusion_components, t)
+
+        score = conversions.epsilon_to_score(xt, epsilon)
+        epsilon_recon = conversions.score_to_epsilon(xt, score)
+
+        assert jnp.allclose(epsilon, epsilon_recon, atol=1e-5)
+
+    def test_epsilon_flow_conversion(self, components_fixture, request, key):
+        """Test epsilon <-> flow conversion."""
+        diffusion_components = request.getfixturevalue(components_fixture)
+        k1, k2 = random.split(key)
+        dim = diffusion_components.linear_sde.dim
+        xt = random.normal(k1, (dim,))
+        epsilon = random.normal(k2, (dim,))
+        t = 0.5
+        conversions = DiffusionModelConversions(diffusion_components, t)
+
+        flow = conversions.epsilon_to_flow(xt, epsilon)
+        epsilon_recon = conversions.flow_to_epsilon(xt, flow)
+
+        assert jnp.allclose(epsilon, epsilon_recon, atol=1e-5)
+
+    def test_quantity_covariances(self, components_fixture, request, key):
+        """Test analytical covariance matches empirical covariance."""
+        diffusion_components = request.getfixturevalue(components_fixture)
+        k1, k2 = random.split(key)
+        dim = diffusion_components.linear_sde.dim
+        xt = random.normal(k1, (dim,))
+        t = 0.5
+        conversions = DiffusionModelConversions(diffusion_components, t)
+
+        num_samples = 100000
+        epsilons = random.normal(k2, (num_samples, dim))
+
+        # Empirical covariances
+        flow_samples = jax.vmap(conversions.epsilon_to_flow, in_axes=(None, 0))(xt, epsilons)
+        score_samples = jax.vmap(conversions.epsilon_to_score, in_axes=(None, 0))(xt, epsilons)
+        drift_samples = jax.vmap(conversions.epsilon_to_drift, in_axes=(None, 0))(xt, epsilons)
+
+        def get_emp_cov(samples):
+            return jnp.cov(samples, rowvar=False)
+
+        emp_flow_cov = get_emp_cov(flow_samples)
+        emp_score_cov = get_emp_cov(score_samples)
+        emp_drift_cov = get_emp_cov(drift_samples)
+
+        # Analytical covariances
+        ana_flow_cov = conversions.get_flow_covariance(xt)
+        ana_score_cov = conversions.get_score_covariance(xt)
+        ana_drift_cov = conversions.get_drift_covariance(xt)
+
+        assert jnp.allclose(emp_flow_cov, ana_flow_cov, atol=0.2)
+        assert jnp.allclose(emp_score_cov, ana_score_cov, atol=0.2)
+        assert jnp.allclose(emp_drift_cov, ana_drift_cov, atol=0.2)
+
     def test_drift_score_consistency(self, components_fixture, request, key):
         """Test that drift_to_score is consistent with other conversions."""
         diffusion_components = request.getfixturevalue(components_fixture)
@@ -333,63 +430,134 @@ class TestDiffusionHubConversions:
         dist = w2_distance(marginal_t, marginal_t_from_s)
         assert dist < 1e-5
 
-# def test_conversion_identities_with_spline(key):
-#     """
-#     Tests the self-consistency of the conversion formulas using a synthetic ground truth
-#     defined by a spline-based Gaussian probability path.
-#     """
-#     assert False, "This test is not working yet"
-#     dim = 2
-#     t0, t1 = 0.0, 3.0
-#     k1, k2, k3, k4, k5 = random.split(key, 5)
 
-#     # 1. Create a synthetic ground-truth path p(xt) = N(mu(t), Sigma(t)) using simple polynomials
-#     # Mean polynomial: mu(t) = c3*t^3 + c2*t^2 + c1*t + c0
-#     mean_coeffs = random.normal(k1, (4, dim))
-#     def mu_fn(t):
-#       return mean_coeffs[0] * t**3 + mean_coeffs[1] * t**2 + mean_coeffs[2] * t + mean_coeffs[3]
+def test_transition_precomputation(key):
+  dim = 2
+  t0, t1 = 0.0, 1.0
+  k1, k2, k3, k4, k5, k6, k7, k8 = random.split(key, 8)
 
-#     # Covariance polynomial (diagonal): Sigma_diag(t) = exp(c1*t + c0)
-#     log_diag_coeffs = random.normal(k2, (2, dim)) * 0.1
-#     def cov_diag_fn(t):
-#       return jnp.exp(log_diag_coeffs[0] * t + log_diag_coeffs[1])
+  F_mat = DenseMatrix(random.normal(k1, (dim, dim)))
+  L_mat = DenseMatrix(random.normal(k2, (dim, dim)))
+  sde = LinearTimeInvariantSDE(F=F_mat, L=L_mat)
 
-#     def get_dist(t):
-#       mu = mu_fn(t)
-#       cov_diag = cov_diag_fn(t)
-#       return StandardGaussian(mu, DiagonalMatrix(cov_diag))
+  prior_mu = random.normal(k3, (dim,))
+  prior_sigma = DiagonalMatrix(jnp.exp(random.normal(k4, (dim,))))
+  prior = StandardGaussian(mu=prior_mu, Sigma=prior_sigma)
 
-#     # 2. Derive ground-truth quantities from the path
-#     def get_true_flow(t, xt):
-#       pt = get_dist(t)
-#       noise = pt.get_noise(xt)
-#       def sample_fn(s):
-#         dist = get_dist(s)
-#         return dist._sample(noise)
+  evidence_cov = DiagonalMatrix(jnp.exp(random.normal(k5, (dim,))))
 
-#       _, flow = jax.jvp(sample_fn, (t,), (jnp.ones_like(t),))
-#       return flow
+  components = DiffusionModelComponents(
+    linear_sde=sde,
+    t0=t0,
+    x_t0_prior=prior,
+    t1=t1,
+    evidence_cov=evidence_cov
+  )
 
-#     def get_true_score(t, xt):
-#       return get_dist(t).score(xt)
+  y_1 = random.normal(k6, (dim,))
+  t = random.uniform(k7, minval=t0 + 1e-3, maxval=t1 - 1e-3)
+  epsilon = random.normal(k8, (dim,))
+
+  linear_sde: AbstractLinearSDE = components.linear_sde
+  conditioned_sde: ConditionedLinearSDE = linear_sde.condition_on_starting_point(1.0, y_1)
 
 
-#     # 3. Define a simple SDE to link drift, score, and flow
-#     F = DenseMatrix(random.normal(k3, (dim, dim)) * 0.5)
-#     L = DenseMatrix(random.normal(k4, (dim, dim)) * 0.5)
-#     sde = LinearTimeInvariantSDE(F, L)
-#     LLT = L @ L.T
-#     components = DiffusionModelComponents(
-#         linear_sde=sde, t0=t0, t1=t1,
-#         x_t0_prior=get_dist(t0),
-#         evidence_cov=DiagonalMatrix.eye(dim).set_zero()
-#     )
 
-#     # Get ground truth values
-#     t = random.uniform(k5, minval=t0 + 0.1, maxval=t1 - 0.1)
-#     xt = get_dist(t).sample(key)
-#     true_flow = get_true_flow(t, xt)
-#     true_score = get_true_score(t, xt)
-#     true_drift = true_flow + 0.5*LLT @ true_score
 
-#     import pdb; pdb.set_trace()
+def create_random_linear_functional(key, dim):
+    k1, k2 = random.split(key)
+    A = DenseMatrix(random.normal(k1, (dim, dim)))
+    b = random.normal(k2, (dim,))
+    return LinearFunctional(A, b)
+
+
+@pytest.mark.parametrize("components_fixture", ["diffusion_components", "lti_sde_diffusion_components"])
+class TestDiffusionFunctionalConversions:
+    """Test that conversion functions work correctly with LinearFunctional inputs."""
+
+    def test_functional_consistency(self, components_fixture, request, key):
+        diffusion_components = request.getfixturevalue(components_fixture)
+        dim = diffusion_components.linear_sde.dim
+        t = 0.5
+        conversions = DiffusionModelConversions(diffusion_components, t)
+
+        k1, k2, k3, k4, k5 = random.split(key, 5)
+        y1_func = create_random_linear_functional(k1, dim)
+        xt_func = create_random_linear_functional(k2, dim)
+        eps_func = create_random_linear_functional(k3, dim)
+        drift_func = create_random_linear_functional(k4, dim)
+        score_func = create_random_linear_functional(k5, dim)
+
+        x_val = random.normal(random.split(k1)[0], (dim,))
+
+        def check_conversion(func, input_func, *args, **kwargs):
+            # Evaluate with LinearFunctional
+            out_func = func(input_func, *args, **kwargs)
+            # Resolve the result
+            resolved_out = resolve_functional(out_func, x_val)
+
+            # Evaluate with resolved input
+            resolved_input = input_func(x_val)
+            direct_out = func(resolved_input, *args, **kwargs)
+
+            # Compare
+            if isinstance(resolved_out, (StandardGaussian, MixedGaussian)):
+                resolved_out_mu = resolve_functional(resolved_out.mu, x_val) if hasattr(resolved_out.mu, '__call__') else resolved_out.mu
+                direct_out_mu = resolve_functional(direct_out.mu, x_val) if hasattr(direct_out.mu, '__call__') else direct_out.mu
+                assert jnp.allclose(resolved_out_mu, direct_out_mu, atol=1e-5)
+                # Also check J or Sigma
+                if isinstance(resolved_out, MixedGaussian):
+                    assert jnp.allclose(resolved_out.J.as_matrix(), direct_out.J.as_matrix(), atol=1e-5)
+                else:
+                    assert jnp.allclose(resolved_out.Sigma.as_matrix(), direct_out.Sigma.as_matrix(), atol=1e-5)
+            else:
+                assert jnp.allclose(resolved_out, direct_out, atol=1e-5)
+
+        # y1_to_bwd_message
+        check_conversion(conversions.y1_to_bwd_message, y1_func)
+
+        # y1_to_marginal
+        check_conversion(conversions.y1_to_marginal, y1_func)
+
+        # y1_to_drift
+        check_conversion(lambda y, x: conversions.y1_to_drift(y, x), y1_func, xt_func(x_val))
+        check_conversion(lambda x, y: conversions.y1_to_drift(y, x), xt_func, y1_func(x_val))
+
+        # epsilon_to_bwd_message
+        check_conversion(lambda e, x: conversions.epsilon_to_bwd_message(x, e), eps_func, xt_func(x_val))
+
+        # epsilon_to_drift
+        check_conversion(lambda e, x: conversions.epsilon_to_drift(x, e), eps_func, xt_func(x_val))
+
+        # epsilon_to_score
+        check_conversion(lambda e, x: conversions.epsilon_to_score(x, e), eps_func, xt_func(x_val))
+
+        # epsilon_to_flow
+        check_conversion(lambda e, x: conversions.epsilon_to_flow(x, e), eps_func, xt_func(x_val))
+
+        # score_to_marginal
+        check_conversion(lambda s, x: conversions.score_to_marginal(x, s), score_func, xt_func(x_val))
+
+        # score_to_flow
+        check_conversion(lambda s, x: conversions.score_to_flow(x, s), score_func, xt_func(x_val))
+
+        # drift_to_bwd_message
+        check_conversion(lambda d, x: conversions.drift_to_bwd_message(x, d), drift_func, xt_func(x_val))
+
+        # drift_to_epsilon
+        check_conversion(lambda d, x: conversions.drift_to_epsilon(x, d), drift_func, xt_func(x_val))
+
+        # drift_to_score
+        check_conversion(lambda d, x: conversions.drift_to_score(x, d), drift_func, xt_func(x_val))
+
+        # drift_to_flow
+        check_conversion(lambda d, x: conversions.drift_to_flow(x, d), drift_func, xt_func(x_val))
+
+        # flow_to_drift
+        check_conversion(lambda f, x: conversions.flow_to_drift(x, f), drift_func, xt_func(x_val)) # Reuse drift_func as flow
+
+        # flow_to_y1
+        check_conversion(lambda f, x: conversions.flow_to_y1(x, f), drift_func, xt_func(x_val))
+
+        # flow_to_score
+        check_conversion(lambda f, x: conversions.flow_to_score(x, f), drift_func, xt_func(x_val))

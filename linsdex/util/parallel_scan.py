@@ -14,6 +14,72 @@ import abc
 import jax.tree_util as jtu
 from jax._src.lax import lax
 from linsdex.util.misc import where
+from linsdex.linear_functional.linear_functional import LinearFunctional
+from linsdex.linear_functional.quadratic_form import QuadraticForm
+
+def _tree_concatenate(tree1: PyTree, tree2: PyTree, axis: int = 0) -> PyTree:
+  """Concatenate two PyTrees along a given axis, handling structural mismatches
+  where one tree has an array and the other has a functional object (LinearFunctional
+  or QuadraticForm).
+  """
+  functional_types = (LinearFunctional, QuadraticForm)
+  def is_functional(x):
+    return isinstance(x, functional_types)
+
+  def promote_to_match(target_functional, source_array):
+    # Get a single-element version of target_functional (without batch dim)
+    if target_functional.batch_size is not None:
+      # If it's a tuple (multi-batch), we just take the first of the first...
+      # but usually it's just an int.
+      idx = (0,) * len(jnp.shape(target_functional.batch_size)) if isinstance(target_functional.batch_size, tuple) else 0
+      single_functional = target_functional[idx]
+    else:
+      single_functional = target_functional
+
+    # Zero it out
+    zero_functional = single_functional.zeros_like(single_functional)
+
+    # Broadcast to source_array's batch size
+    batch_size = source_array.shape[axis]
+    def broadcast(x):
+      if eqx.is_array(x):
+        return jnp.broadcast_to(x, (batch_size,) + x.shape)
+      return x
+    batched_zero = jtu.tree_map(broadcast, zero_functional)
+
+    # Set the constant part
+    if isinstance(target_functional, LinearFunctional):
+      return eqx.tree_at(lambda f: f.b, batched_zero, source_array)
+    elif isinstance(target_functional, QuadraticForm):
+      return eqx.tree_at(lambda f: f.c, batched_zero, source_array)
+    return batched_zero
+
+  # First, check structures match with custom leaves
+  treedef1 = jtu.tree_structure(tree1, is_leaf=is_functional)
+  treedef2 = jtu.tree_structure(tree2, is_leaf=is_functional)
+  if treedef1 != treedef2:
+    raise ValueError(f"Tree structures must match. Got {treedef1} and {treedef2}")
+
+  leaves1 = jtu.tree_leaves(tree1, is_leaf=is_functional)
+  leaves2 = jtu.tree_leaves(tree2, is_leaf=is_functional)
+
+  new_leaves = []
+  for l1, l2 in zip(leaves1, leaves2):
+    if type(l1) == type(l2):
+      if is_functional(l1):
+        new_leaf = jtu.tree_map(lambda a, b: jnp.concatenate([a, b], axis=axis), l1, l2)
+      else:
+        new_leaf = jnp.concatenate([l1, l2], axis=axis)
+    else:
+      if is_functional(l1):
+        l2_promoted = promote_to_match(l1, l2)
+        new_leaf = jtu.tree_map(lambda a, b: jnp.concatenate([a, b], axis=axis), l1, l2_promoted)
+      else:
+        l1_promoted = promote_to_match(l2, l1)
+        new_leaf = jtu.tree_map(lambda a, b: jnp.concatenate([a, b], axis=axis), l1_promoted, l2)
+    new_leaves.append(new_leaf)
+
+  return treedef1.unflatten(new_leaves)
 
 def parallel_scan(operator: Callable[[eqx.Module,eqx.Module],eqx.Module],
                   elements: eqx.Module,
@@ -111,7 +177,7 @@ def parallel_scan(operator: Callable[[eqx.Module,eqx.Module],eqx.Module],
       odd_cumulative_except_first = vmapped_operator(even_cumulative, odd_no_first)
 
     # Tag on t_1 to the start of the odd cumulative products
-    odd_cumulative = jtu.tree_map(lambda x, y: jnp.concatenate([x[:1], y], axis=0), elements, odd_cumulative_except_first)
+    odd_cumulative = _tree_concatenate(elements[:1], odd_cumulative_except_first, axis=0)
 
     """
     Interleave the even and odd cumulative products.
@@ -271,7 +337,7 @@ def parallel_segmented_scan(
     odd_cumulative_except_first = jax.vmap(fn)(odd_mask_no_first, odd_no_first, odd_cumulative_except_first)
 
     # Tag on t_1 to the start of the odd cumulative products
-    odd_cumulative = jtu.tree_map(lambda x, y: jnp.concatenate([x[:1], y], axis=0), elements, odd_cumulative_except_first)
+    odd_cumulative = _tree_concatenate(elements[:1], odd_cumulative_except_first, axis=0)
 
     """
     Interleave the even and odd cumulative products.
@@ -343,61 +409,19 @@ def segmented_scan(
     new_sum = where(flag, value, operator(current_sum, value))
     return new_sum, new_sum
 
-  _, cumsum_result = jax.lax.scan(body, elements[0], (elements[1:], reset_mask[1:]))
+  # Promotion check for lax.scan carry
+  first_op_result = operator(elements[0], elements[1])
+  initial_carry = where(jnp.array(False), first_op_result, elements[0])
+
+  _, cumsum_result = jax.lax.scan(body, initial_carry, (elements[1:], reset_mask[1:]))
 
   # Add the first element to the beginning of the result
-  result = jtu.tree_map(lambda x, y: jnp.concatenate([x[None], y], axis=0), elements[0], cumsum_result)
+  elements_0_batched = jtu.tree_map(lambda x: x[None] if eqx.is_array(x) else x, elements[0])
+  result = _tree_concatenate(elements_0_batched, cumsum_result, axis=0)
   return result
 
 ################################################################################################################
 
 if __name__ == '__main__':
-  from debug import *
-  import matplotlib.pyplot as plt
-
-
-  class MyObject(eqx.Module):
-    x: Float[Array, 'N']
-    y: Float[Array, 'N']
-
-    @property
-    def batch_size(self) -> Union[None,int,Tuple[int]]:
-      if self.x.ndim == 1:
-        return None
-      return self.x.shape[0]
-
-    def __getitem__(self, idx: Any):
-      params, static = eqx.partition(self, eqx.is_array)
-      sliced_params = jtu.tree_map(lambda x: x[idx], params)
-      return eqx.combine(sliced_params, static)
-
-    @property
-    def shape(self):
-      params, static = eqx.partition(self, eqx.is_array)
-      sliced_params = jtu.tree_map(lambda x: x.shape, params)
-      return eqx.combine(sliced_params, static)
-
-
-  def make_object(i):
-    return MyObject(jnp.ones((2, 2))*i, i)
-
-  n_elements = 6
-  elems = jax.vmap(make_object)(jnp.arange(n_elements)+1)
-
-
-  def operator(a, b):
-    return MyObject(x=a.x + b.x,
-                    y=a.y + b.y)
-
-  keep_indices = jnp.array([0, 2, 3, 5])
-  reset_mask = (jnp.arange(elems.batch_size)[:,None] == keep_indices[None,:]).sum(axis=-1)
-  assert elems.batch_size == reset_mask.shape[0]
-
-  out1 = parallel_segmented_scan(operator, elems, reset_mask)
-  out2 = segmented_scan(operator, elems, reset_mask)
-
-  assert jnp.allclose(out1.x, out2.x)
-  assert jnp.allclose(out1.y, out2.y)
-
-  import pdb; pdb.set_trace()
+  pass
 

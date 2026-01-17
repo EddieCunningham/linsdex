@@ -122,9 +122,6 @@ class AbstractSolverParams(eqx.Module, abc.ABC):
     (tnext, controller_state) = stepsize_controller.init(
         terms, t0, t1, x0, dt0, args, solver.func, error_order
     )
-    (tnext, _) = stepsize_controller.init(
-        terms, t0, t1, x0, dt0, args, solver.func, error_order
-    )
 
     tnext = jnp.minimum(tnext, t1)
     solver_state = solver.init(terms, t0, tnext, x0, args)
@@ -156,7 +153,7 @@ class ODESolverParams(AbstractSolverParams):
   solver: str = 'dopri5'
   adjoint: str = 'recursive_checkpoint'
   stepsize_controller: str = 'pid'
-  max_steps: int = 8192
+  max_steps: int = 65536
   throw: bool = True
   progress_meter: str = 'none'
 
@@ -275,7 +272,7 @@ class SDESolverParams(AbstractSolverParams):
   solver: str = 'shark'
   adjoint: str = 'recursive_checkpoint'
   stepsize_controller: str = 'none'
-  max_steps: int = 8192
+  max_steps: int = 65536
   throw: bool = True
   progress_meter: str = 'none'
 
@@ -489,21 +486,27 @@ def _ode_sde_solve(sde: AbstractSDE,
 
 class DummySDE(AbstractSDE):
 
-  flow_function: Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']]
-  drift_function: Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']]
-  diffusion_function: Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']]
+  flow_function: Optional[Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']]] = None
+  drift_function: Optional[Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']]] = None
+  diffusion_function: Optional[Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']]] = None
 
   @property
   def batch_size(self) -> Union[None,int,Tuple[int]]:
     return None
 
   def get_flow(self, t: Scalar, xt: Float[Array, 'D']) -> Float[Array, 'D']:
+    if self.flow_function is None:
+      raise ValueError("flow_function is not defined in this DummySDE")
     return self.flow_function(t, xt)
 
   def get_drift(self, t: Scalar,  xt: Float[Array, 'D']) -> Float[Array, 'D']:
+    if self.drift_function is None:
+      raise ValueError("drift_function is not defined in this DummySDE")
     return self.drift_function(t, xt)
 
   def get_diffusion_coefficient(self, t: Scalar, xt: Float[Array, 'D']):
+    if self.diffusion_function is None:
+      raise ValueError("diffusion_function is not defined in this DummySDE")
     return self.diffusion_function(t, xt)
 
 def ode_solve(sde: Union[AbstractSDE, Callable[[Scalar, Float[Array, 'D']], Float[Array, 'D']]],
@@ -511,7 +514,7 @@ def ode_solve(sde: Union[AbstractSDE, Callable[[Scalar, Float[Array, 'D']], Floa
               save_times: Array,
               params: ODESolverParams = ODESolverParams(),
               diffrax_solver_state: Optional[DiffraxSolverState] = DiffraxSolverState(),
-              return_solve_solution: Optional[bool] = False) -> Union[TimeSeries, Tuple[TimeSeries, diffrax.Solution]]:
+              return_solve_solution: Optional[bool] = False) -> Union[TimeSeries, Tuple[TimeSeries, DiffraxSolverState]]:
   """Solve the probability flow ODE of the input SDE
 
   This function numerically integrates the probability flow ODE derived from an SDE.
@@ -525,13 +528,13 @@ def ode_solve(sde: Union[AbstractSDE, Callable[[Scalar, Float[Array, 'D']], Floa
   - save_times: Array of times at which to save the solution
   - params: Parameters for the ODE solver
   - diffrax_solver_state: The state of the solver. If provided, the solver will continue from the last saved time
-  - return_solve_solution: Whether to return the diffrax.Solution object. This contains the solver
+  - return_solve_solution: Whether to return the DiffraxSolverState object. This contains the solver
                            state which can be used to continue the solve from the last saved time
 
   **Returns**:
 
   - TimeSeries: The solution trajectory at the save times
-  - (Optional) diffrax.Solution: The full diffrax solution object if return_solve_solution=True
+  - (Optional) DiffraxSolverState: The full diffrax solver state object if return_solve_solution=True
   """
   if isinstance(sde, AbstractSDE):
     pass
@@ -546,7 +549,7 @@ def sde_sample(sde: Union[AbstractSDE, Tuple[Callable[[Scalar, Float[Array, 'D']
                save_times: Array,
                params: SDESolverParams = SDESolverParams(),
                diffrax_solver_state: Optional[DiffraxSolverState] = DiffraxSolverState(),
-               return_solve_solution: Optional[bool] = False) -> Union[TimeSeries, Tuple[TimeSeries, diffrax.Solution]]:
+               return_solve_solution: Optional[bool] = False) -> Union[TimeSeries, Tuple[TimeSeries, DiffraxSolverState]]:
   """Sample from an SDE dx/dt = f(t, x) + g(t, x) dW_t.
 
   This function generates sample paths from a stochastic differential equation.
@@ -561,13 +564,13 @@ def sde_sample(sde: Union[AbstractSDE, Tuple[Callable[[Scalar, Float[Array, 'D']
   - save_times: Array of times at which to save the solution
   - params: Configuration parameters for the SDE solver
   - diffrax_solver_state: The state of the solver. If provided, the solver will continue from the last saved time
-  - return_solve_solution: Whether to return the diffrax.Solution object. This contains the solver
+  - return_solve_solution: Whether to return the DiffraxSolverState object. This contains the solver
                            state which can be used to continue the solve from the last saved time
 
   **Returns**:
 
   - TimeSeries: The sampled trajectory at the save times
-  - (Optional) diffrax.Solution: The full diffrax solution object if return_solve_solution=True
+  - (Optional) DiffraxSolverState: The full diffrax solver state object if return_solve_solution=True
   """
   if isinstance(sde, AbstractSDE):
     pass

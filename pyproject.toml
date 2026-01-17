@@ -21,7 +21,6 @@ dependencies = [
     "einops",
     "equinox",
     "diffrax",
-    "pytest",
     "matplotlib",
     "jaxtyping",
     "ml-dtypes",
@@ -32,8 +31,12 @@ dependencies = [
     "scipy",
 ]
 
-[tool.setuptools]
-packages = ["linsdex"]
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["linsdex*"]
 
 [tool.black]
 line-length = 88
@@ -115,3 +118,9 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short --import-mode=importlib --ignore=tests/categorical"
+
+[dependency-groups]
+dev = [
+    "build>=1.4.0",
+    "twine>=6.2.0",
+]

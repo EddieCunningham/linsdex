@@ -11,6 +11,8 @@ from linsdex.potential.gaussian.transition import (
   GaussianTransition, max_likelihood_gaussian_transition,
   GaussianJointStatistics, gaussian_joint_e_step, gaussian_joint_m_step
 )
+from linsdex.linear_functional.linear_functional import LinearFunctional
+from linsdex.linear_functional.quadratic_form import QuadraticForm
 from linsdex.potential.gaussian.dist import StandardGaussian, NaturalGaussian, MixedGaussian
 from linsdex.potential.abstract import AbstractPotential, AbstractTransition, JointPotential
 from linsdex.matrix.dense import DenseMatrix
@@ -323,6 +325,26 @@ class TestGaussianTransition(unittest.TestCase):
         atol=1e-10, rtol=1e-10
       ))
       self.assertTrue(jnp.allclose(result_simplified_std.logZ, result_standard_std.logZ, atol=1e-10, rtol=1e-10))
+
+  def test_quadratic_form_logZ(self):
+    """Test GaussianTransition with QuadraticForm logZ."""
+    transition = self.make_transition()
+    # Create a dummy QuadraticForm
+    A = transition.Sigma.zeros_like(transition.Sigma)
+    b = jnp.zeros(self.x_dim)
+    c = jnp.array(1.5)
+    qf = QuadraticForm(A, b, c)
+
+    # Update transition with QF logZ
+    transition_qf = eqx.tree_at(lambda x: x.logZ, transition, qf)
+
+    self.assertIsInstance(transition_qf.logZ, QuadraticForm)
+    self.assertTrue(jnp.allclose(transition_qf.logZ.c, c))
+
+    # Check that conditioning on x works and preserves QF structure if needed
+    x = jnp.zeros(self.x_dim)
+    conditioned = transition_qf.condition_on_x(x)
+    self.assertIsInstance(conditioned.logZ, QuadraticForm)
 
 
 class TestMaxLikelihoodEstimation(unittest.TestCase):

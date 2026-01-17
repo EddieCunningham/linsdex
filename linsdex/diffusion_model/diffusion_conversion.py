@@ -185,6 +185,49 @@ class DiffusionModelConversions(AbstractBatchableObject):
     bwd_mean = bwd_precision.solve(bwd_score) + xt
     return MixedGaussian(bwd_mean, bwd_precision)
 
+  def epsilon_to_bwd_message(self, xt: Float[Array, 'D'], epsilon: Float[Array, 'D']) -> MixedGaussian:
+    r"""
+    x_{t|1} = \mu_{t|1}^beta + {\Sigma_{t|1}^beta}^{1/2} \epsilon, where \epsilon ~ N(0, I)
+    """
+    bwd_precision = self.quantities.virtual_beta_t.J
+    L_chol = bwd_precision.get_cholesky()
+    bwd_mean = xt - bwd_precision.solve(L_chol@epsilon)
+    return MixedGaussian(bwd_mean, bwd_precision)
+
+  def bwd_message_to_epsilon(self, xt: Float[Array, 'D'], bwd_message: MixedGaussian) -> Float[Array, 'D']:
+    """
+    Inverse of epsilon_to_bwd_message.
+    """
+    bwd_precision = self.quantities.virtual_beta_t.J
+    L_chol = bwd_precision.get_cholesky()
+    return L_chol.T @ (xt - bwd_message.mu)
+
+  def epsilon_to_drift(self, xt: Float[Array, 'D'], epsilon: Float[Array, 'D']) -> Float[Array, 'D']:
+    bwd_message = self.epsilon_to_bwd_message(xt, epsilon)
+    return self.bwd_message_to_drift(bwd_message, xt)
+
+  def drift_to_epsilon(self, xt: Float[Array, 'D'], drift: Float[Array, 'D']) -> Float[Array, 'D']:
+    bwd_message = self.drift_to_bwd_message(xt, drift)
+    return self.bwd_message_to_epsilon(xt, bwd_message)
+
+  def epsilon_to_score(self, xt: Float[Array, 'D'], epsilon: Float[Array, 'D']) -> Float[Array, 'D']:
+    bwd_message = self.epsilon_to_bwd_message(xt, epsilon)
+    marginal = self.bwd_message_to_marginal(bwd_message)
+    return self.marginal_to_score(marginal, xt)
+
+  def score_to_epsilon(self, xt: Float[Array, 'D'], score: Float[Array, 'D']) -> Float[Array, 'D']:
+    marginal = self.score_to_marginal(xt, score)
+    bwd_message = self.marginal_to_bwd_message(marginal)
+    return self.bwd_message_to_epsilon(xt, bwd_message)
+
+  def epsilon_to_flow(self, xt: Float[Array, 'D'], epsilon: Float[Array, 'D']) -> Float[Array, 'D']:
+    drift = self.epsilon_to_drift(xt, epsilon)
+    return self.drift_to_flow(xt, drift)
+
+  def flow_to_epsilon(self, xt: Float[Array, 'D'], flow: Float[Array, 'D']) -> Float[Array, 'D']:
+    drift = self.flow_to_drift(xt, flow)
+    return self.drift_to_epsilon(xt, drift)
+
   def marginal_to_score(self, marginal: StandardGaussian, xt: Float[Array, 'D']) -> Float[Array, 'D']:
     return marginal.score(xt)
 
@@ -252,6 +295,24 @@ class DiffusionModelConversions(AbstractBatchableObject):
   def y1_to_score(self, xt: Float[Array, 'D'], y1: Float[Array, 'D']) -> Float[Array, 'D']:
     marginal = self.y1_to_marginal(y1)
     return self.marginal_to_score(marginal, xt)
+
+  def get_flow_covariance(self, xt: Float[Array, 'D']) -> AbstractSquareMatrix:
+    def epsilon_to_flow(epsilon: Float[Array, 'D']) -> Float[Array, 'D']:
+      return self.epsilon_to_flow(xt, epsilon)
+    flow_jac = jax.jacfwd(epsilon_to_flow)(jnp.zeros(self.components.linear_sde.dim))
+    return flow_jac @ flow_jac.T
+
+  def get_score_covariance(self, xt: Float[Array, 'D']) -> AbstractSquareMatrix:
+    def epsilon_to_score(epsilon: Float[Array, 'D']) -> Float[Array, 'D']:
+      return self.epsilon_to_score(xt, epsilon)
+    score_jac = jax.jacfwd(epsilon_to_score)(jnp.zeros(self.components.linear_sde.dim))
+    return score_jac @ score_jac.T
+
+  def get_drift_covariance(self, xt: Float[Array, 'D']) -> AbstractSquareMatrix:
+    def epsilon_to_drift(epsilon: Float[Array, 'D']) -> Float[Array, 'D']:
+      return self.epsilon_to_drift(xt, epsilon)
+    drift_jac = jax.jacfwd(epsilon_to_drift)(jnp.zeros(self.components.linear_sde.dim))
+    return drift_jac @ drift_jac.T
 
 def noise_schedule_drift_correction(
   components: DiffusionModelComponents,
