@@ -2,10 +2,11 @@ import jax
 import jax.numpy as jnp
 from jax import random
 from functools import partial
-from typing import Optional, Mapping, Tuple, Sequence, Union, Any, Callable, Type
+from typing import Optional, Mapping, Tuple, Sequence, Union, Any, Callable, Type, TYPE_CHECKING, List
 import einops
 import equinox as eqx
 from jaxtyping import Array, PRNGKeyArray, Float, Scalar, Bool, PyTree
+from functools import wraps
 import lineax as lx
 import abc
 import warnings
@@ -23,10 +24,35 @@ from plum import dispatch
 import linsdex.util as util
 from linsdex.potential.gaussian.gaussian_potential_series import GaussianPotentialSeries
 
+if TYPE_CHECKING:
+  from linsdex.sde.ode_sde_simulation import ODESolverParams
+  from linsdex.sde.conditioned_linear_sde import ConditionedLinearSDE
+
 __all__ = ['AbstractSDE',
            'AbstractLinearSDE',
            'AbstractLinearTimeInvariantSDE',
-           'TimeScaledLinearTimeInvariantSDE']
+           'TimeScaledLinearTimeInvariantSDE',
+           'vectorize_sde_transition']
+
+################################################################################################################
+
+def vectorize_sde_transition(f: Callable):
+  """Decorator that automatically handles multiple start times `s` for SDE transition distributions.
+
+  If `s` is an array, it applies `eqx.filter_vmap` to the function call.
+
+  Args:
+    f: The function to be vectorized. It must take `s` and `t` as arguments.
+
+  Returns:
+    A wrapped function that automatically handles vector inputs for `s`.
+  """
+  @wraps(f)
+  def f_wrapper(self, s: Union[Scalar, Float[Array, 'N']], t: Scalar, *args, **kwargs):
+    if jnp.ndim(s) > 0:
+      return eqx.filter_vmap(lambda s_val: f(self, s_val, t, *args, **kwargs))(s)
+    return f(self, s, t, *args, **kwargs)
+  return f_wrapper
 
 ################################################################################################################
 
@@ -66,9 +92,9 @@ class AbstractLinearSDE(AbstractSDE, abc.ABC):
 
   def get_transition_distribution(
     self,
-    s: Scalar,
+    s: Union[Scalar, Float[Array, 'N']],
     t: Scalar,
-    ode_solver_params: Optional['ODESolverParams'] = None,
+    ode_solver_params: Optional["ODESolverParams"] = None,
   ) -> GaussianTransition:
     """Get the transition parameters from time s to time t. See section
     6.1 of Särkkä's book (https://users.aalto.fi/~asolin/sde-book/sde-book.pdf)
@@ -83,17 +109,19 @@ class AbstractLinearSDE(AbstractSDE, abc.ABC):
 
     **Arguments**
 
-    - `s`: The start time
+    - `s`: The start time(s). If this is an array, we assume it is sorted ascending
+           and all values are less than t.
     - `t`: The end time
 
     **Returns**
 
-    - `A`: The transition matrix
-    - `u`: The input
-    - `Sigma`: The transition covariance
+    - `GaussianTransition`: The transition distribution(s). If s is an array,
+                            this will be a batched GaussianTransition object.
     """
-    # Call get params to get the data types
-    F, u, L = self.get_params(s)
+    # Call get params to get the data types. If s is a vector, use the first element
+    s_is_scalar = jnp.ndim(s) == 0
+    s_val = s if s_is_scalar else s[0]
+    F, u, L = self.get_params(s_val)
     I = (F.T@L).set_eye() # Initialize with identity matrix.  Do it this way to get the right data type
 
     D = self.dim
@@ -127,27 +155,67 @@ class AbstractLinearSDE(AbstractSDE, abc.ABC):
       return dytau_params
 
     # Solve the ODE backwards in time
-    from linsdex.sde.ode_sde_simulation import ode_solve, ODESolverParams
-    save_times = jnp.array([t, s])
-    if ode_solver_params is None:
-      ode_solver_params = ODESolverParams()
-    y0_params = ode_solve(reverse_dynamics, yT_params, save_times, params=ode_solver_params)
+    from linsdex.sde.ode_sde_simulation import ode_solve
+    from linsdex.series.series import TimeSeries
+    if s_is_scalar:
+      save_times = jnp.array([t, s])
+    else:
+      # Assume s is sorted ascending and all less than t.
+      # ode_solve requires monotonic save_times. Since we solve backwards,
+      # we go from t down to min(s).
+      save_times = jnp.concatenate([jnp.array([t]), s[::-1]])
 
-    # Extract the final time point and combine with the static data
-    y0_params = jtu.tree_map(lambda x: x[-1], y0_params)
-    y0 = eqx.combine(y0_params, yT_static)
+    if ode_solver_params is None:
+      from linsdex.sde.ode_sde_simulation import ODESolverParams
+      ode_solver_params = ODESolverParams()
+
+    # ode_solve returns a TimeSeries object if the state is an array,
+    # or a pytree of arrays if the state is a pytree.
+    res = ode_solve(reverse_dynamics, yT_params, save_times, params=ode_solver_params)
+    if isinstance(res, TimeSeries):
+      y0_params_raw = res.values
+    else:
+      y0_params_raw = res # This is a pytree of (num_save_times, ...) arrays
+
+    # Extract all points except the first one (which is t)
+    y0_params = jtu.tree_map(lambda x: x[1:], y0_params_raw)
+
+    # If s was a vector, we need to reverse back to match original s order
+    if not s_is_scalar:
+      y0_params = jtu.tree_map(lambda x: x[::-1], y0_params)
+
+    # Combine with static data. We need to broadcast static parts if s is a vector
+    # so that eqx.filter_vmap works correctly later.
+    if s_is_scalar:
+      y0_params = jtu.tree_map(lambda x: x[0], y0_params)
+      y0 = eqx.combine(y0_params, yT_static)
+    else:
+      batch_size_val = jtu.tree_leaves(y0_params)[0].shape[0]
+      def broadcast_static(x):
+        return jnp.broadcast_to(x, (batch_size_val,) + x.shape) if eqx.is_array(x) else x
+      yT_static_batched = jtu.tree_map(broadcast_static, yT_static)
+      y0 = eqx.combine(y0_params, yT_static_batched)
+
     A, u, Sigma = y0
 
     # If all of Sigma has elements close to 0, symbolically set it to 0.
-    Sigma = util.where(jnp.abs(Sigma.elements).max() < 1e-8, Sigma.set_zero(), Sigma)
+    def finalize_sigma(S):
+      return util.where(jnp.abs(S.elements).max() < 1e-8, S.set_zero(), S)
 
-    return GaussianTransition(A, u, Sigma)
+    if s_is_scalar:
+      Sigma = finalize_sigma(Sigma)
+      return GaussianTransition(A, u, Sigma)
+    else:
+      # Use filter_vmap to construct batched GaussianTransition
+      Sigma = eqx.filter_vmap(finalize_sigma)(Sigma)
+      return eqx.filter_vmap(GaussianTransition)(A, u, Sigma)
 
-  def condition_on(self, evidence: GaussianPotentialSeries) -> 'ConditionedLinearSDE':
+  def condition_on(self, evidence: GaussianPotentialSeries) -> "ConditionedLinearSDE":
     from linsdex.sde.conditioned_linear_sde import ConditionedLinearSDE
     return ConditionedLinearSDE(self, evidence)
 
-  def condition_on_starting_point(self, t0: Scalar, x0: Float[Array, 'D']) -> 'ConditionedLinearSDE':
+  def condition_on_starting_point(self, t0: Scalar, x0: Float[Array, 'D']) -> "ConditionedLinearSDE":
+    from linsdex.sde.conditioned_linear_sde import ConditionedLinearSDE
     t0 = jnp.array(t0)
     evidence = GaussianPotentialSeries(t0, x0)
     return self.condition_on(evidence)
@@ -176,6 +244,7 @@ class AbstractLinearTimeInvariantSDE(AbstractLinearSDE, abc.ABC):
                                            AbstractSquareMatrix]:
     return self.F, self.u, self.L
 
+  @vectorize_sde_transition
   def get_transition_distribution(self,
                            s: Scalar,
                            t: Scalar) -> GaussianTransition:
@@ -260,7 +329,7 @@ class AbstractLinearTimeInvariantSDE(AbstractLinearSDE, abc.ABC):
 ################################################################################################################
 
 class TimeScaledLinearTimeInvariantSDE(AbstractLinearTimeInvariantSDE):
-  """If sde represents dx_s = Fx_s ds + LdW_s, then this represents reparametrizing time
+  r"""If sde represents dx_s = Fx_s ds + LdW_s, then this represents reparametrizing time
   as t = \gamma*s and also x_s = \gamma*tilde{x}_s
   """
 

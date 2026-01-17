@@ -18,7 +18,7 @@ from linsdex.crf.continuous_crf import DiscretizeResult, AbstractContinuousCRF
 from linsdex.potential.gaussian.dist import MixedGaussian, NaturalGaussian, StandardGaussian, NaturalJointGaussian, GaussianStatistics
 from linsdex.potential.gaussian.transition import GaussianTransition
 from linsdex.matrix.matrix_with_inverse import MatrixWithInverse
-from linsdex.sde.sde_base import AbstractLinearSDE, AbstractLinearTimeInvariantSDE
+from linsdex.sde.sde_base import AbstractLinearSDE, AbstractLinearTimeInvariantSDE, vectorize_sde_transition
 from plum import dispatch
 import linsdex.util as util
 from linsdex.series.series import TimeSeries
@@ -122,6 +122,7 @@ class ConditionedLinearSDE(AbstractLinearSDE, AbstractContinuousCRF):
     _, _, L = self.get_params(t, messages=messages)
     return L
 
+  @vectorize_sde_transition
   def get_transition_distribution(
     self,
     s: Scalar,

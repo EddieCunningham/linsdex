@@ -131,6 +131,111 @@ class TestLinearSDETransitions:
     assert jnp.allclose(transition.u, expected_u)
     assert jnp.allclose(transition.Sigma.as_matrix(), expected_Sigma)
 
+  def test_multiple_start_times(self):
+    """Test get_transition_distribution with multiple start times using ODE solver"""
+    class TestLinearSDE(AbstractLinearSDE):
+      _dim: int
+      def __init__(self, dim=2):
+        self._dim = dim
+      @property
+      def dim(self):
+        return self._dim
+      @property
+      def batch_size(self):
+        return None
+      def get_params(self, t):
+        F = DiagonalMatrix(-t * jnp.ones(self.dim))
+        u = jnp.ones(self.dim) * t
+        L = DiagonalMatrix(jnp.ones(self.dim) * (1.0 + t))
+        return F, u, L
+
+    dim = 2
+    sde = TestLinearSDE(dim=dim)
+    s = jnp.array([0.1, 0.2, 0.5])
+    t = 1.0
+
+    # Batched call (uses AbstractLinearSDE.get_transition_distribution which we modified)
+    batched_transition = sde.get_transition_distribution(s, t)
+
+    assert batched_transition.batch_size == len(s)
+
+    # Individual calls for verification
+    for i, si in enumerate(s):
+      individual_transition = sde.get_transition_distribution(si, t)
+
+      # GaussianTransition is an AbstractBatchableObject, so we can index it
+      batched_elt = batched_transition[i]
+
+      assert jnp.allclose(batched_elt.A.as_matrix(), individual_transition.A.as_matrix(), atol=1e-5)
+      assert jnp.allclose(batched_elt.u, individual_transition.u, atol=1e-5)
+      assert jnp.allclose(batched_elt.Sigma.as_matrix(), individual_transition.Sigma.as_matrix(), atol=1e-5)
+
+  def test_lti_multiple_start_times(self):
+    """Test AbstractLinearTimeInvariantSDE (analytical) with multiple start times"""
+    sigma = 1.0
+    dim = 2
+    sde = BrownianMotion(sigma=sigma, dim=dim)
+    s = jnp.array([0.0, 0.5])
+    t = 1.0
+
+    batched_transition = sde.get_transition_distribution(s, t)
+    assert batched_transition.batch_size == len(s)
+
+    for i, si in enumerate(s):
+      individual_transition = sde.get_transition_distribution(si, t)
+      batched_elt = batched_transition[i]
+      assert jnp.allclose(batched_elt.A.as_matrix(), individual_transition.A.as_matrix())
+      assert jnp.allclose(batched_elt.u, individual_transition.u)
+      assert jnp.allclose(batched_elt.Sigma.as_matrix(), individual_transition.Sigma.as_matrix())
+
+  def test_variance_preserving_multiple_start_times(self):
+    """Test VariancePreserving with multiple start times"""
+    from linsdex.sde.sde_examples import VariancePreserving
+    class TestVP(VariancePreserving):
+      def __init__(self, beta_min, beta_max, dim):
+        self.beta_min = jnp.array(beta_min)
+        self.beta_max = jnp.array(beta_max)
+        self.dim = dim
+
+    sde = TestVP(beta_min=0.1, beta_max=1.0, dim=2)
+    s = jnp.array([0.0, 0.5])
+    t = 1.0
+
+    batched_transition = sde.get_transition_distribution(s, t)
+    assert batched_transition.batch_size == len(s)
+
+    for i, si in enumerate(s):
+      individual_transition = sde.get_transition_distribution(si, t)
+      batched_elt = batched_transition[i]
+      assert jnp.allclose(batched_elt.A.as_matrix(), individual_transition.A.as_matrix())
+      assert jnp.allclose(batched_elt.u, individual_transition.u)
+      assert jnp.allclose(batched_elt.Sigma.as_matrix(), individual_transition.Sigma.as_matrix())
+
+  def test_conditioned_sde_multiple_start_times(self):
+    """Test ConditionedLinearSDE with multiple start times"""
+    from linsdex.sde.conditioned_linear_sde import ConditionedLinearSDE
+    base_sde = BrownianMotion(sigma=1.0, dim=2)
+
+    # Create evidence
+    ts_evidence = jnp.array([0.0, 1.0])
+    means = jnp.zeros((2, 2))
+    certainty = jnp.ones((2, 2)) * 10.0
+    evidence = GaussianPotentialSeries(ts_evidence, means, certainty=certainty)
+
+    conditioned_sde = ConditionedLinearSDE(base_sde, evidence)
+    s = jnp.array([0.2, 0.8])
+    t = 0.9
+
+    batched_transition = conditioned_sde.get_transition_distribution(s, t)
+    assert batched_transition.batch_size == len(s)
+
+    for i, si in enumerate(s):
+      individual_transition = conditioned_sde.get_transition_distribution(si, t)
+      batched_elt = batched_transition[i]
+      assert jnp.allclose(batched_elt.A.as_matrix(), individual_transition.A.as_matrix(), atol=1e-5)
+      assert jnp.allclose(batched_elt.u, individual_transition.u, atol=1e-5)
+      assert jnp.allclose(batched_elt.Sigma.as_matrix(), individual_transition.Sigma.as_matrix(), atol=1e-5)
+
 
 class TestLinearSDEConditioning:
   """Test conditioning of linear SDEs on evidence"""

@@ -23,7 +23,7 @@ import lineax as lx
 from linsdex.potential.gaussian.transition import GaussianTransition
 from linsdex.potential.gaussian.dist import StandardGaussian, NaturalGaussian
 from linsdex.matrix.matrix_with_inverse import MatrixWithInverse
-from linsdex.sde.sde_base import AbstractLinearTimeInvariantSDE, AbstractLinearSDE
+from linsdex.sde.sde_base import AbstractLinearTimeInvariantSDE, AbstractLinearSDE, vectorize_sde_transition
 from linsdex.matrix.block.block_2x2 import Block2x2Matrix
 from linsdex.matrix.block.block_3x3 import Block3x3Matrix
 
@@ -100,6 +100,7 @@ class VariancePreserving(AbstractLinearSDE, abc.ABC):
     L = jnp.sqrt(beta)*I
     return F, u, L
 
+  @vectorize_sde_transition
   def get_transition_distribution(self,
                                   s: Scalar,
                                   t: Scalar) -> GaussianTransition:
