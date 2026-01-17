@@ -14,6 +14,7 @@ from plum import dispatch
 import linsdex.util as util
 from linsdex.matrix.matrix_base import AbstractSquareMatrix, mat_mul, matrix_solve
 from linsdex.series.batchable_object import AbstractBatchableObject, auto_vmap
+from linsdex.matrix.diagonal import DiagonalMatrix
 
 __all__ = ['LinearFunctional', 'resolve_linear_functional']
 
@@ -36,9 +37,17 @@ class LinearFunctional(AbstractBatchableObject):
   A: AbstractSquareMatrix
   b: Float[Array, 'D']
 
+  @classmethod
+  def identity(cls, dim: int) -> 'LinearFunctional':
+    return LinearFunctional(DiagonalMatrix.eye(dim), jnp.zeros(dim))
+
   @property
   def batch_size(self) -> Union[None,int,Tuple[int]]:
     return self.A.batch_size
+
+  @property
+  def ndim(self) -> int:
+    return self.b.ndim
 
   @property
   def shape(self):

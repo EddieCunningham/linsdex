@@ -252,3 +252,56 @@ class TestPotentialSeries:
     certainty_for_test = jnp.array([[1.0], [1.0], [1.0]])
     with pytest.raises(ValueError, match="Unknown parameterization"):
       GaussianPotentialSeries(ts=times, xts=values, certainty=certainty_for_test, parameterization='invalid')
+
+  def test_init_with_linear_functional(self):
+    """Test initialization with LinearFunctional."""
+    from linsdex.linear_functional.linear_functional import LinearFunctional
+
+    times = jnp.array([0.0, 1.0])
+    dim = 2
+    # Create a linear functional Ax + b where A=I, b=0 (identity)
+    lf = LinearFunctional.identity(dim)
+    # Broadcast to match times
+    lf_batched = eqx.filter_vmap(lambda _: lf)(jnp.arange(2))
+
+    # Create series
+    pts = GaussianPotentialSeries(ts=times, xts=lf_batched)
+
+    assert jnp.array_equal(pts.times, times)
+    assert len(pts) == 2
+    # Default parameterization is mixed when no certainty provided, so mu should be a LinearFunctional
+    assert isinstance(pts.node_potentials.mu, LinearFunctional)
+
+  def test_linear_functional_conversions(self):
+    """Test conversions when using LinearFunctional."""
+    from linsdex.linear_functional.linear_functional import LinearFunctional
+
+    times = jnp.array([0.0, 1.0])
+    dim = 2
+    lf = LinearFunctional.identity(dim)
+    lf_batched = eqx.filter_vmap(lambda _: lf)(jnp.arange(2))
+
+    pts = GaussianPotentialSeries(ts=times, xts=lf_batched)
+
+    # These should work without error
+    pts_nat = pts.to_nat()
+    pts_mixed = pts.to_mixed()
+    pts_std = pts.to_std()
+
+    assert isinstance(pts_nat.node_potentials.h, LinearFunctional)
+    assert isinstance(pts_mixed.node_potentials.mu, LinearFunctional)
+    assert isinstance(pts_std.node_potentials.mu, LinearFunctional)
+
+  def test_scalar_ts_with_linear_functional(self):
+    """Test initialization with scalar ts and LinearFunctional."""
+    from linsdex.linear_functional.linear_functional import LinearFunctional
+
+    time = jnp.array(0.5)
+    dim = 2
+    lf = LinearFunctional.identity(dim)
+
+    pts = GaussianPotentialSeries(ts=time, xts=lf)
+
+    assert pts.times.shape == (1,)
+    assert len(pts) == 1
+    assert isinstance(pts.node_potentials.mu, LinearFunctional)

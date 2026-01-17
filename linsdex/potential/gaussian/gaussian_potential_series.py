@@ -15,6 +15,7 @@ from linsdex.matrix.dense import DenseMatrix
 from linsdex.matrix.diagonal import DiagonalMatrix
 from linsdex.matrix.tags import TAGS
 from linsdex.potential.abstract import AbstractPotential, AbstractTransition, JointPotential
+from linsdex.linear_functional.linear_functional import LinearFunctional
 from plum import dispatch
 
 __all__ = ['GaussianPotentialSeries']
@@ -22,7 +23,7 @@ __all__ = ['GaussianPotentialSeries']
 def _process_potentials(
     _,
     ts: Float[Array, 'N'],
-    xts: Float[Array, 'N D'],
+    xts: Union[Float[Array, 'N D'], LinearFunctional],
     standard_deviation: Optional[Float[Array, 'N D']] = None,
     certainty: Union[Float[Array, 'N D'], None] = None,
     parameterization: Optional[Literal['natural', 'mixed', 'standard']] = 'natural'
@@ -51,8 +52,8 @@ def _process_potentials(
     # Determine which potentials are fully certain and which are fully uncertain
     if standard_deviation is None and certainty is None:
       # We will be fully certain for all observations
-      standard_deviation = jnp.zeros_like(xts)
-      certainty = jnp.ones_like(xts)*jnp.inf
+      standard_deviation = jnp.zeros(xts.shape)
+      certainty = jnp.full(xts.shape, jnp.inf)
       is_fully_certain = jnp.ones_like(ts, dtype=bool)
       is_fully_uncertain = jnp.zeros_like(ts, dtype=bool)
       parameterization = 'mixed' # Only used mixed parameterization if we're doing a bridge
@@ -133,7 +134,7 @@ class GaussianPotentialSeries(AbstractBatchableObject):
 
   def __init__(self,
                ts: Float[Array, 'N'],
-               xts: Float[Array, 'N D'],
+               xts: Union[Float[Array, 'N D'], LinearFunctional, AbstractPotential],
                standard_deviation: Optional[Float[Array, 'N D']] = None,
                certainty: Union[Float[Array, 'N D'], None] = None,
                parameterization: Optional[Literal['natural', 'mixed', 'standard']] = 'natural'):
@@ -151,7 +152,7 @@ class GaussianPotentialSeries(AbstractBatchableObject):
                             there is any (un)certainty provided.  Otherwise defaults to 'mixed'.
     """
     if ts.ndim == 0:
-      assert xts.ndim == 1
+      assert not isinstance(xts, AbstractPotential)
       ts = ts[None]
       xts = xts[None]
 

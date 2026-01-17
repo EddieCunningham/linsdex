@@ -232,6 +232,19 @@ class TestLinearFunctionalWithSymbolicMatrices:
     assert solved_lf.A.tags.is_zero
     assert jnp.allclose(solved_lf.b, 0.0)
 
+  def test_identity_classmethod(self):
+    """Test the identity class method."""
+    dim = 3
+    lf_id = LinearFunctional.identity(dim)
+
+    assert lf_id.A.tags.is_nonzero
+    assert not lf_id.A.tags.is_inf
+    assert jnp.allclose(lf_id.b, 0.0)
+
+    key = random.PRNGKey(123)
+    x = random.normal(key, (dim,))
+    assert jnp.allclose(lf_id(x), x)
+
 class TestResolveLinearFunctional:
   def test_resolve_basic(self):
     """Test basic functionality of resolve_linear_functional."""
