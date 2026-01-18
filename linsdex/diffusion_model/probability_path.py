@@ -1,15 +1,31 @@
-"""
+r"""
 This module provides tools for converting between different parameterizations
 of flow based generative models constructed from linear stochastic differential
 equations with Gaussian priors. The framework assumes a base SDE of the form
 $dx_t = (F_t x_t + u_t)dt + L_t dW_t$ and a Gaussian prior $p(x_0)$. Under these
 conditions the stochastic bridge $p(x_t | x_0, y_1)$ is Gaussian and all common
 model outputs including the score function, SDE drift and probability flow ODE
-velocity are related by closed form affine transformations. The implementations
-follow the theoretical derivations for Markovian projection and memoryless SDEs
-as detailed in the accompanying documentation. These conversions enable
-practitioners to train a model in one parameterization while sampling or
-performing inference in another.
+velocity are related by closed form affine transformations.
+
+The following notation and objects are used throughout this module:
+  x_t: The state of the stochastic process at time t.
+  y_1: The terminal evidence or observation at time t = 1.
+  \beta_t(x_t) = p(y_1 | x_t): The backward message representing the
+    likelihood of the terminal evidence given the current state.
+  p_t(x_t | y_1): The marginal distribution of the stochastic bridge
+    at time t conditioned on the terminal evidence.
+  s_t(x_t) = \nabla \log p_t(x_t | y_1): The score function of the
+    marginal distribution.
+  b_t(x_t): The drift of the Markovian projection SDE that preserves
+    the marginals of the stochastic bridge.
+  v_t(x_t): The velocity field of the probability flow ODE.
+  \epsilon: Standard normal noise used for reparameterizing the
+    stochastic bridge state.
+
+The implementations follow the theoretical derivations for Markovian projection
+and memoryless SDEs as detailed in the accompanying documentation. These
+conversions enable practitioners to train a model in one parameterization
+while sampling or performing inference in another.
 """
 import jax
 import jax.numpy as jnp

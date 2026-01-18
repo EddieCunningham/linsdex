@@ -3,8 +3,8 @@ import jax
 jax.config.update('jax_enable_x64', True)
 import jax.numpy as jnp
 from jax import random
-from linsdex.diffusion_model.diffusion_conversion import DiffusionModelComponents, ProbabilityPath, probability_path_transition
-from linsdex.diffusion_model.diffusion_conversion import DiffusionModelConversions, Y1ToBwdMean, Y1ToMarginalMean
+from linsdex.diffusion_model.probability_path import DiffusionModelComponents, ProbabilityPath, probability_path_transition
+from linsdex.diffusion_model.probability_path import DiffusionModelConversions, Y1ToBwdMean, Y1ToMarginalMean
 from linsdex import OrnsteinUhlenbeck, empirical_dist, w2_distance, LinearTimeInvariantSDE
 from linsdex.sde.conditioned_linear_sde import ConditionedLinearSDE
 from linsdex.potential.gaussian.dist import StandardGaussian, MixedGaussian
@@ -155,7 +155,7 @@ class TestDiffusionHubConversions:
         assert jnp.allclose(marginal.Sigma.as_matrix(), marginal_recon.Sigma.as_matrix(), atol=1e-5)
 
     def test_diffusion_path_quantities_properties(self, components_fixture, request, key):
-        """Test the properties of DiffusionPathQuantities."""
+        """Test the properties of ProbabilityPath."""
         diffusion_components = request.getfixturevalue(components_fixture)
         t = 0.5
         quantities = ProbabilityPath(diffusion_components, t)
@@ -539,7 +539,7 @@ def test_auto_vmap_unbatched_args(key):
 
 def test_diffusion_marginal_at_t0_matches_prior(key):
   """Verify that the marginal distribution at t=t0 matches the prior.
-  This would have caught the numerical instability and logical error in DiffusionPathQuantities."""
+  This would have caught the numerical instability and logical error in ProbabilityPath."""
   dim = 2
   t0, t1 = 0.0, 1.0
   sde = OrnsteinUhlenbeck(dim=dim, sigma=1.0, lambda_=1.0)
@@ -563,7 +563,7 @@ def test_diffusion_marginal_at_t0_matches_prior(key):
   p_xt0_given_y1 = resolve_functional(p_xt0_given_y1_functional, y1)
 
   # At t=t0, if we haven't incorporated any y1 yet, it should exactly match the prior
-  # Note: DiffusionPathQuantities incorporates y1 via the bridge formula.
+  # Note: ProbabilityPath incorporates y1 via the bridge formula.
   # If we want to check that it matches the prior at t=0, we need to ensure the formula is stable.
   dist = w2_distance(p_xt0_given_y1, prior)
   assert dist < 1e-10
