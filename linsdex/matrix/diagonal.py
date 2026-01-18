@@ -199,6 +199,10 @@ def get_cholesky(A: DiagonalMatrix) -> DiagonalMatrix:
   return DiagonalMatrix(out_elements, tags=out_tags).fix_to_tags()
 
 @dispatch
+def get_trace(A: DiagonalMatrix) -> Scalar:
+  return jnp.sum(A.elements, axis=-1)
+
+@dispatch
 def get_exp(A: DiagonalMatrix) -> DiagonalMatrix:
   expA = jnp.exp(A.elements)
   out_tags = A.tags.exp_update()

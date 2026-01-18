@@ -291,6 +291,7 @@ class GaussianTransition(AbstractTransition):
     h2 = -self.A.T@h1
     return NaturalJointGaussian(J11, J12, J22, h1, h2, self.logZ)
 
+  @auto_vmap
   def update_and_marginalize_out_x(self, potential: AbstractGaussianPotential) -> AbstractGaussianPotential:
     std_potential = potential.to_std()
     mu, Sigma = std_potential.mu, std_potential.Sigma
@@ -315,6 +316,20 @@ class GaussianTransition(AbstractTransition):
       return out_std.to_mixed()
     else:
       raise ValueError(f"Unknown potential type: {type(potential)}")
+
+################################################################################################################
+
+@auto_vmap
+def virtual_potential_to_transition(potential: AbstractGaussianPotential) -> GaussianTransition:
+  """Convert a virtual potential to a transition"""
+  potential_std: StandardGaussian = potential.to_std()
+
+  A = potential_std.mu.A
+  u = potential_std.mu.b
+  Sigma = potential_std.Sigma
+  logZ = potential_std.logZ
+
+  return GaussianTransition(A, u, Sigma, logZ)
 
 ################################################################################################################
 

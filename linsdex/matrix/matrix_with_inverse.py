@@ -161,8 +161,12 @@ def get_matrix_inverse(A: MatrixWithInverse) -> MatrixWithInverse:
 ################################################################################################################
 
 @dispatch
-def get_log_det(A: MatrixWithInverse) -> Scalar:
-  return A.matrix.get_log_det()
+def get_log_det(A: MatrixWithInverse, mask: Optional[Bool[Array, 'D']] = None) -> Scalar:
+  return A.matrix.get_log_det(mask=mask)
+
+@dispatch
+def get_trace(A: MatrixWithInverse) -> Scalar:
+  return A.matrix.get_trace()
 
 @dispatch
 def get_cholesky(A: MatrixWithInverse) -> AbstractSquareMatrix:

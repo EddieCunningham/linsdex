@@ -181,12 +181,16 @@ class AbstractSquareMatrix(AbstractBatchableObject, abc.ABC):
     return get_matrix_inverse(self)
 
   @auto_vmap
-  def get_log_det(self) -> Scalar:
-    return get_log_det(self)
+  def get_log_det(self, mask: Optional[Bool[Array, 'D']] = None) -> Scalar:
+    return get_log_det(self, mask=mask)
 
   @auto_vmap
   def get_cholesky(self) -> 'AbstractSquareMatrix':
     return get_cholesky(self)
+
+  @auto_vmap
+  def get_trace(self) -> Scalar:
+    return get_trace(self)
 
   @auto_vmap
   def get_exp(self) -> 'AbstractSquareMatrix':
@@ -312,6 +316,20 @@ def get_cholesky(A: AbstractSquareMatrix) -> AbstractSquareMatrix:
   **Returns**:
 
   - The Cholesky decomposition of A
+  """
+  pass
+
+@dispatch.abstract
+def get_trace(A: AbstractSquareMatrix) -> Scalar:
+  """Compute the trace of a matrix.
+
+  **Arguments**:
+
+  - `A` - Matrix to compute the trace for
+
+  **Returns**:
+
+  - The trace of A
   """
   pass
 

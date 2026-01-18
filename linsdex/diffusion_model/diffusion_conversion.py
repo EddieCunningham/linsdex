@@ -1,8 +1,21 @@
+"""
+This module provides tools for converting between different parameterizations
+of flow based generative models constructed from linear stochastic differential
+equations with Gaussian priors. The framework assumes a base SDE of the form
+$dx_t = (F_t x_t + u_t)dt + L_t dW_t$ and a Gaussian prior $p(x_0)$. Under these
+conditions the stochastic bridge $p(x_t | x_0, y_1)$ is Gaussian and all common
+model outputs including the score function, SDE drift and probability flow ODE
+velocity are related by closed form affine transformations. The implementations
+follow the theoretical derivations for Markovian projection and memoryless SDEs
+as detailed in the accompanying documentation. These conversions enable
+practitioners to train a model in one parameterization while sampling or
+performing inference in another.
+"""
 import jax
 import jax.numpy as jnp
 from typing import Optional, Callable
 from jaxtyping import Array, Float, Scalar
-from linsdex.series.batchable_object import AbstractBatchableObject
+from linsdex.series.batchable_object import AbstractBatchableObject, auto_vmap
 from linsdex.matrix.matrix_base import AbstractSquareMatrix
 from linsdex.potential.gaussian.dist import MixedGaussian, StandardGaussian
 from linsdex.potential.gaussian.transition import GaussianTransition
@@ -12,6 +25,13 @@ from linsdex.matrix.diagonal import DiagonalMatrix
 from linsdex.linear_functional.functional_ops import resolve_functional
 
 class DiffusionModelComponents(AbstractBatchableObject):
+  """
+  Container for the fundamental components of a diffusion model. This includes
+  the base linear stochastic differential equation, the Gaussian prior at the
+  initial time and the evidence covariance at the terminal time. These
+  components define the stochastic bridge that is used for model training and
+  conversion.
+  """
   linear_sde: AbstractLinearSDE
   t0: Scalar
   x_t0_prior: StandardGaussian
@@ -22,15 +42,29 @@ class DiffusionModelComponents(AbstractBatchableObject):
   def batch_size(self):
     return self.linear_sde.batch_size
 
-class DiffusionPathQuantities(AbstractBatchableObject):
-  """
-  Helper class to compute and store intermediate quantities for a diffusion model at a specific time t.
-  This avoids recomputing these quantities across different conversion functions.
+class ProbabilityPath(AbstractBatchableObject):
+  r"""
+  Computes and stores the intermediate probabilistic quantities for a diffusion
+  model at a specific time. This class encapsulates the backward message
+  $\beta_t(x_t) = p(y_1 | x_t)$ and the marginal distribution $p_t(x_t | y_1)$
+  of the stochastic bridge.
+
+  The backward message is computed by integrating the terminal evidence
+  $p(y_1 | x_1)$ against the transition distribution $p(x_1 | x_t)$, which
+  yields the expression
+  $\beta_t(x_t) = \int p(y_1 | x_1) p(x_1 | x_t) dx_1$.
+
+  The bridge path marginal is then obtained by incorporating this message into
+  the forward transition $p(x_t | x_0)$ to form the joint $p(x_t, x_0 | y_1)$
+  and marginalizing over the prior $p(x_0)$. This gives the closed form
+  expression
+  $p_t(x_t | y_1) = \int p(x_t | x_0, y_1) p(x_0) dx_0$.
+
+  By precomputing these Gaussian distributions, we avoid redundant calculations
+  when converting between different model parameterizations.
   """
   virtual_beta_t: MixedGaussian
-  y1_to_marginal_mean: LinearFunctional
-  marginal_precision: AbstractSquareMatrix
-  beta_precision: AbstractSquareMatrix
+  virtual_pt_given_y1: StandardGaussian
 
   def __init__(self, components: DiffusionModelComponents, t: Scalar):
     evidence_precision = components.evidence_cov.get_inverse()
@@ -41,35 +75,49 @@ class DiffusionPathQuantities(AbstractBatchableObject):
     virtual_phi_t1 = MixedGaussian(no_op_lf, evidence_precision)
     phi_t1gt = components.linear_sde.get_transition_distribution(t, components.t1)
     self.virtual_beta_t = phi_t1gt.update_and_marginalize_out_y(virtual_phi_t1)
-    self.beta_precision = self.virtual_beta_t.J
 
     # --- Marginal distribution quantities (from Y1ToMarginalMean) ---
-    x_t0_prior_std: StandardGaussian = components.x_t0_prior.to_std()
-    m, P = x_t0_prior_std.mu, x_t0_prior_std.Sigma
-
-    virtual_phi_t0 = MixedGaussian(no_op_lf, evidence_precision.set_inf())
     phi_tgt0 = components.linear_sde.get_transition_distribution(components.t0, t)
-    virtual_alpha_t = phi_tgt0.update_and_marginalize_out_x(virtual_phi_t0)
 
-    alpha_t = resolve_functional(virtual_alpha_t, m)
-    p_xt_given_x0_and_y1: StandardGaussian = (alpha_t + self.virtual_beta_t).to_std()
+    # We want to compute the "bridge path" marginal:
+    # p_t(x_t; y_1) = \int p(x_t | x_0, y_1) p(x_0) dx_0
+    # This path has the property that p_0(x_0) = p(x_0) (the prior)
+    # and p_1(x_1; y_1) = p(x_1 | y_1) (the observation).
 
-    At_alpha = virtual_alpha_t.mu.A
-    Jt_alpha = virtual_alpha_t.J
-    At_alpha_beta = p_xt_given_x0_and_y1.Sigma @ Jt_alpha @ At_alpha
-    corrected_covariance = p_xt_given_x0_and_y1.Sigma + At_alpha_beta @ P @ At_alpha_beta.T
+    # 1. Incorporate the future evidence y_1 into the transition p(x_t | x_0)
+    # This gives the joint p(x_t, x_0 | y_1) = p(x_t | x_0, y_1) p(y_1 | x_0)
+    joint_xt_x0 = phi_tgt0.update_y(self.virtual_beta_t)
 
-    virtual_pt_given_y1 = StandardGaussian(p_xt_given_x0_and_y1.mu, corrected_covariance)
+    # 2. Extract the bridge transition p(x_t | x_0, y_1)
+    bridge_transition = joint_xt_x0.transition
 
-    self.y1_to_marginal_mean = virtual_pt_given_y1.mu
-    self.marginal_precision = virtual_pt_given_y1.Sigma.get_inverse()
+    # 3. Marginalize over the prior p(x_0)
+    # This computes \int p(x_t | x_0, y_1) p(x_0) dx_0
+    p_xt_bridge = bridge_transition.update_and_marginalize_out_x(components.x_t0_prior)
+
+    self.virtual_pt_given_y1 = p_xt_bridge.to_std()
+
+  @property
+  def y1_to_marginal_mean(self) -> LinearFunctional:
+    return self.virtual_pt_given_y1.to_mixed().mu
+
+  @property
+  def marginal_precision(self) -> AbstractSquareMatrix:
+    return self.virtual_pt_given_y1.Sigma.get_inverse()
+
+  @property
+  def beta_precision(self) -> AbstractSquareMatrix:
+    return self.virtual_beta_t.J
 
   @property
   def batch_size(self):
     return self.virtual_beta_t.batch_size
 
-
 class Y1ToBwdMean(LinearFunctional):
+  """
+  Represents the affine mapping from terminal evidence to the mean of the
+  backward message at the current time.
+  """
   A: AbstractSquareMatrix
   b: Float[Array, 'D']
   precision: AbstractSquareMatrix
@@ -78,16 +126,20 @@ class Y1ToBwdMean(LinearFunctional):
     self,
     components: DiffusionModelComponents,
     t: Scalar,
-    _quantities: Optional[DiffusionPathQuantities] = None,
+    _quantities: Optional[ProbabilityPath] = None,
   ):
     if _quantities is None:
-      _quantities = DiffusionPathQuantities(components, t)
+      _quantities = ProbabilityPath(components, t)
 
     self.A = _quantities.virtual_beta_t.mu.A
     self.b = _quantities.virtual_beta_t.mu.b
     self.precision = _quantities.virtual_beta_t.J
 
 class Y1ToMarginalMean(LinearFunctional):
+  """
+  Represents the affine mapping from terminal evidence to the mean of the
+  marginal distribution at the current time.
+  """
   A: AbstractSquareMatrix
   b: Float[Array, 'D']
   precision: AbstractSquareMatrix
@@ -96,16 +148,20 @@ class Y1ToMarginalMean(LinearFunctional):
     self,
     components: DiffusionModelComponents,
     t: Scalar,
-    _quantities: Optional[DiffusionPathQuantities] = None,
+    _quantities: Optional[ProbabilityPath] = None,
   ):
     if _quantities is None:
-      _quantities = DiffusionPathQuantities(components, t)
+      _quantities = ProbabilityPath(components, t)
 
     self.A = _quantities.y1_to_marginal_mean.A
     self.b = _quantities.y1_to_marginal_mean.b
     self.precision = _quantities.marginal_precision
 
 class BwdMeanToMarginalMean(LinearFunctional):
+  """
+  Represents the affine mapping from the backward message mean to the marginal
+  distribution mean at the current time.
+  """
   A: AbstractSquareMatrix
   b: Float[Array, 'D']
   bwd_precision: AbstractSquareMatrix
@@ -115,10 +171,10 @@ class BwdMeanToMarginalMean(LinearFunctional):
     self,
     components: DiffusionModelComponents,
     t: Scalar,
-    _quantities: Optional[DiffusionPathQuantities] = None,
+    _quantities: Optional[ProbabilityPath] = None,
   ):
     if _quantities is None:
-      _quantities = DiffusionPathQuantities(components, t)
+      _quantities = ProbabilityPath(components, t)
 
     y1_to_marginal_mean = Y1ToMarginalMean(components, t, _quantities=_quantities)
     y1_to_bwd_mean = Y1ToBwdMean(components, t, _quantities=_quantities)
@@ -131,12 +187,20 @@ class BwdMeanToMarginalMean(LinearFunctional):
 
 
 class DiffusionModelConversions(AbstractBatchableObject):
-  quantities: DiffusionPathQuantities
+  """
+  Provides methods to transform between different representations of the
+  generative process. This class implements the affine mappings between the
+  terminal evidence, the backward message, the marginal distribution, the score
+  function, the SDE drift and the probability flow ODE velocity. These
+  transformations are derived from the Gaussian structure of the linear SDE and
+  the initial prior.
+  """
+  quantities: ProbabilityPath
   components: DiffusionModelComponents
   t: Scalar
 
   def __init__(self, components: DiffusionModelComponents, t: Scalar):
-    self.quantities = DiffusionPathQuantities(components, t)
+    self.quantities = ProbabilityPath(components, t)
     self.components = components
     self.t = t
 
@@ -145,39 +209,70 @@ class DiffusionModelConversions(AbstractBatchableObject):
     return self.quantities.batch_size
 
   def y1_to_bwd_message(self, y1: Float[Array, 'D']) -> MixedGaussian:
+    """
+    Maps the terminal evidence to the backward message at the current time.
+    """
     y1_to_bwd_mean_lf = LinearFunctional(self.quantities.virtual_beta_t.mu.A, self.quantities.virtual_beta_t.mu.b)
     bwd_mean = y1_to_bwd_mean_lf(y1)
     return MixedGaussian(bwd_mean, self.quantities.virtual_beta_t.J)
 
   def bwd_message_to_y1(self, bwd_message: MixedGaussian) -> Float[Array, 'D']:
+    """
+    Maps the backward message at the current time to the terminal evidence.
+    """
     y1_to_bwd_mean_lf = LinearFunctional(self.quantities.virtual_beta_t.mu.A, self.quantities.virtual_beta_t.mu.b)
     bwd_mean_to_y1 = y1_to_bwd_mean_lf.get_inverse()
     return bwd_mean_to_y1(bwd_message.mu)
 
   def y1_to_marginal(self, y1: Float[Array, 'D']) -> StandardGaussian:
+    """
+    Maps the terminal evidence to the marginal distribution at the current time.
+    """
     marginal_mean = self.quantities.y1_to_marginal_mean(y1)
     return StandardGaussian(marginal_mean, self.quantities.marginal_precision.get_inverse())
 
   def marginal_to_y1(self, marginal: StandardGaussian) -> Float[Array, 'D']:
+    """
+    Maps the marginal distribution at the current time to the terminal evidence.
+    """
     marginal_mean_to_y1 = self.quantities.y1_to_marginal_mean.get_inverse()
     return marginal_mean_to_y1(marginal.mu)
 
   def bwd_message_to_marginal(self, bwd_message: MixedGaussian) -> StandardGaussian:
+    """
+    Transforms the backward message into the marginal distribution at the current time.
+    """
     bwd_mean_to_marginal_mean = BwdMeanToMarginalMean(self.components, self.t)
     marginal_mean = bwd_mean_to_marginal_mean(bwd_message.mu)
     return StandardGaussian(marginal_mean, bwd_mean_to_marginal_mean.marginal_precision.get_inverse())
 
   def marginal_to_bwd_message(self, marginal: StandardGaussian) -> MixedGaussian:
+    """
+    Transforms the marginal distribution into the backward message at the current time.
+    """
     bwd_mean_to_marginal_mean = BwdMeanToMarginalMean(self.components, self.t)
     bwd_mean = bwd_mean_to_marginal_mean.get_inverse()(marginal.mu)
     return MixedGaussian(bwd_mean, bwd_mean_to_marginal_mean.bwd_precision)
 
   def bwd_message_to_drift(self, bwd_message: MixedGaussian, xt: Float[Array, 'D']) -> Float[Array, 'D']:
+    r"""
+    Computes the SDE drift $b_t(x_t)$ from the backward message $\beta_t(x_t)$ at
+    the current state. The drift is given by the expression
+    $b_t(x_t) = F_t x_t + u_t + L_t L_t^\top \nabla \log \beta_t(x_t)$.
+    This transformation allows the model to steer the process toward the
+    terminal evidence.
+    """
     F, u, L = self.components.linear_sde.get_params(self.t)
     LLT = L @ L.T
     return F @ xt + u + LLT @ bwd_message.score(xt)
 
   def drift_to_bwd_message(self, xt: Float[Array, 'D'], drift: Float[Array, 'D']) -> MixedGaussian:
+    r"""
+    Recovers the backward message $\beta_t(x_t)$ from the SDE drift $b_t(x_t)$ at
+    the current state. This involves solving the relation
+    $\nabla \log \beta_t(x_t) = (L_t L_t^\top)^{-1} (b_t(x_t) - F_t x_t - u_t)$
+    for the message parameters.
+    """
     F, u, L = self.components.linear_sde.get_params(self.t)
     LLT = L @ L.T
     bwd_score = LLT.solve(drift - F @ xt - u)
@@ -186,8 +281,8 @@ class DiffusionModelConversions(AbstractBatchableObject):
     return MixedGaussian(bwd_mean, bwd_precision)
 
   def epsilon_to_bwd_message(self, xt: Float[Array, 'D'], epsilon: Float[Array, 'D']) -> MixedGaussian:
-    r"""
-    x_{t|1} = \mu_{t|1}^beta + {\Sigma_{t|1}^beta}^{1/2} \epsilon, where \epsilon ~ N(0, I)
+    """
+    Maps the standard normal noise to the backward message at the current state.
     """
     bwd_precision = self.quantities.virtual_beta_t.J
     L_chol = bwd_precision.get_cholesky()
@@ -196,47 +291,77 @@ class DiffusionModelConversions(AbstractBatchableObject):
 
   def bwd_message_to_epsilon(self, xt: Float[Array, 'D'], bwd_message: MixedGaussian) -> Float[Array, 'D']:
     """
-    Inverse of epsilon_to_bwd_message.
+    Maps the backward message at the current state to the standard normal noise.
     """
     bwd_precision = self.quantities.virtual_beta_t.J
     L_chol = bwd_precision.get_cholesky()
     return L_chol.T @ (xt - bwd_message.mu)
 
   def epsilon_to_drift(self, xt: Float[Array, 'D'], epsilon: Float[Array, 'D']) -> Float[Array, 'D']:
+    """
+    Computes the SDE drift from the standard normal noise at the current state.
+    """
     bwd_message = self.epsilon_to_bwd_message(xt, epsilon)
     return self.bwd_message_to_drift(bwd_message, xt)
 
   def drift_to_epsilon(self, xt: Float[Array, 'D'], drift: Float[Array, 'D']) -> Float[Array, 'D']:
+    """
+    Recovers the standard normal noise from the SDE drift at the current state.
+    """
     bwd_message = self.drift_to_bwd_message(xt, drift)
     return self.bwd_message_to_epsilon(xt, bwd_message)
 
   def epsilon_to_score(self, xt: Float[Array, 'D'], epsilon: Float[Array, 'D']) -> Float[Array, 'D']:
+    """
+    Computes the score function from the standard normal noise at the current state.
+    """
     bwd_message = self.epsilon_to_bwd_message(xt, epsilon)
     marginal = self.bwd_message_to_marginal(bwd_message)
     return self.marginal_to_score(marginal, xt)
 
   def score_to_epsilon(self, xt: Float[Array, 'D'], score: Float[Array, 'D']) -> Float[Array, 'D']:
+    """
+    Recovers the standard normal noise from the score function at the current state.
+    """
     marginal = self.score_to_marginal(xt, score)
     bwd_message = self.marginal_to_bwd_message(marginal)
     return self.bwd_message_to_epsilon(xt, bwd_message)
 
   def epsilon_to_flow(self, xt: Float[Array, 'D'], epsilon: Float[Array, 'D']) -> Float[Array, 'D']:
+    """
+    Computes the probability flow ODE velocity from the standard normal noise at the current state.
+    """
     drift = self.epsilon_to_drift(xt, epsilon)
     return self.drift_to_flow(xt, drift)
 
   def flow_to_epsilon(self, xt: Float[Array, 'D'], flow: Float[Array, 'D']) -> Float[Array, 'D']:
+    """
+    Recovers the standard normal noise from the probability flow ODE velocity at the current state.
+    """
     drift = self.flow_to_drift(xt, flow)
     return self.drift_to_epsilon(xt, drift)
 
   def marginal_to_score(self, marginal: StandardGaussian, xt: Float[Array, 'D']) -> Float[Array, 'D']:
+    """
+    Computes the score function from the marginal distribution at the current state.
+    """
     return marginal.score(xt)
 
   def score_to_marginal(self, xt: Float[Array, 'D'], score: Float[Array, 'D']) -> StandardGaussian:
+    """
+    Recovers the marginal distribution from the score function at the current state.
+    """
     marginal_precision = self.quantities.marginal_precision
     marginal_mean = marginal_precision.solve(score) + xt
     return StandardGaussian(marginal_mean, marginal_precision.get_inverse())
 
   def score_to_flow(self, xt: Float[Array, 'D'], score: Float[Array, 'D']) -> Float[Array, 'D']:
+    r"""
+    Computes the probability flow ODE velocity $v_t(x_t)$ from the score
+    function $\nabla \log p_t(x_t)$ at the current state. The velocity is
+    defined as $v_t(x_t) = b_t(x_t) - 0.5 L_t L_t^\top \nabla \log p_t(x_t)$,
+    which ensures that the ODE preserves the marginal distributions of the SDE.
+    """
     marginal = self.score_to_marginal(xt, score)
     bwd_message = self.marginal_to_bwd_message(marginal)
     drift = self.bwd_message_to_drift(bwd_message, xt)
@@ -245,29 +370,51 @@ class DiffusionModelConversions(AbstractBatchableObject):
     return drift - 0.5 * LLT @ score
 
   def y1_to_drift(self, y1: Float[Array, 'D'], xt: Float[Array, 'D']) -> Float[Array, 'D']:
+    """
+    Maps the terminal evidence to the SDE drift at the current state.
+    """
     bwd_message = self.y1_to_bwd_message(y1)
     return self.bwd_message_to_drift(bwd_message, xt)
 
   def drift_to_y1(self, xt: Float[Array, 'D'], drift: Float[Array, 'D']) -> Float[Array, 'D']:
+    """
+    Maps the SDE drift at the current state to the terminal evidence.
+    """
     bwd_message = self.drift_to_bwd_message(xt, drift)
     return self.bwd_message_to_y1(bwd_message)
 
   def drift_to_score(self, xt: Float[Array, 'D'], drift: Float[Array, 'D']) -> Float[Array, 'D']:
+    """
+    Maps the SDE drift to the score function at the current state.
+    """
     bwd_message = self.drift_to_bwd_message(xt, drift)
     marginal = self.bwd_message_to_marginal(bwd_message)
     return self.marginal_to_score(marginal, xt)
 
   def drift_to_flow(self, xt: Float[Array, 'D'], drift: Float[Array, 'D']) -> Float[Array, 'D']:
+    """
+    Maps the SDE drift to the probability flow ODE velocity at the current state.
+    """
     score = self.drift_to_score(xt, drift)
     _, _, L = self.components.linear_sde.get_params(self.t)
     LLT = L @ L.T
     return drift - 0.5 * LLT @ score
 
   def y1_to_flow(self, y1: Float[Array, 'D'], xt: Float[Array, 'D']) -> Float[Array, 'D']:
+    """
+    Maps the terminal evidence to the probability flow ODE velocity at the current state.
+    """
     drift = self.y1_to_drift(y1, xt)
     return self.drift_to_flow(xt, drift)
 
   def flow_to_drift(self, xt: Float[Array, 'D'], flow: Float[Array, 'D']) -> Float[Array, 'D']:
+    """
+    Maps the probability flow ODE velocity $v_t(x_t)$ to the SDE drift $b_t(x_t)$
+    at the current state. This requires inverting the relationship between the
+    flow, drift and score while accounting for the Gaussian prior on the
+    initial state. The calculation utilizes the precomputed precision matrices
+    and affine mappings from the ProbabilityPath.
+    """
     F, u, L = self.components.linear_sde.get_params(self.t)
     LLT = L @ L.T
     bwd_to_marginal_mean = BwdMeanToMarginalMean(self.components, self.t)
@@ -285,30 +432,48 @@ class DiffusionModelConversions(AbstractBatchableObject):
     return drift
 
   def flow_to_y1(self, xt: Float[Array, 'D'], flow: Float[Array, 'D']) -> Float[Array, 'D']:
+    """
+    Maps the probability flow ODE velocity at the current state to the terminal evidence.
+    """
     drift = self.flow_to_drift(xt, flow)
     return self.drift_to_y1(xt, drift)
 
   def flow_to_score(self, xt: Float[Array, 'D'], flow: Float[Array, 'D']) -> Float[Array, 'D']:
+    """
+    Maps the probability flow ODE velocity to the score function at the current state.
+    """
     drift = self.flow_to_drift(xt, flow)
     return self.drift_to_score(xt, drift)
 
   def y1_to_score(self, xt: Float[Array, 'D'], y1: Float[Array, 'D']) -> Float[Array, 'D']:
+    """
+    Maps the terminal evidence to the score function at the current state.
+    """
     marginal = self.y1_to_marginal(y1)
     return self.marginal_to_score(marginal, xt)
 
   def get_flow_covariance(self, xt: Float[Array, 'D']) -> AbstractSquareMatrix:
+    """
+    Computes the covariance of the probability flow ODE velocity induced by the standard normal noise.
+    """
     def epsilon_to_flow(epsilon: Float[Array, 'D']) -> Float[Array, 'D']:
       return self.epsilon_to_flow(xt, epsilon)
     flow_jac = jax.jacfwd(epsilon_to_flow)(jnp.zeros(self.components.linear_sde.dim))
     return flow_jac @ flow_jac.T
 
   def get_score_covariance(self, xt: Float[Array, 'D']) -> AbstractSquareMatrix:
+    """
+    Computes the covariance of the score function induced by the standard normal noise.
+    """
     def epsilon_to_score(epsilon: Float[Array, 'D']) -> Float[Array, 'D']:
       return self.epsilon_to_score(xt, epsilon)
     score_jac = jax.jacfwd(epsilon_to_score)(jnp.zeros(self.components.linear_sde.dim))
     return score_jac @ score_jac.T
 
   def get_drift_covariance(self, xt: Float[Array, 'D']) -> AbstractSquareMatrix:
+    """
+    Computes the covariance of the SDE drift induced by the standard normal noise.
+    """
     def epsilon_to_drift(epsilon: Float[Array, 'D']) -> Float[Array, 'D']:
       return self.epsilon_to_drift(xt, epsilon)
     drift_jac = jax.jacfwd(epsilon_to_drift)(jnp.zeros(self.components.linear_sde.dim))
@@ -322,6 +487,15 @@ def noise_schedule_drift_correction(
   noise_schedule: Optional[Callable[[Scalar, Float[Array, 'D']], AbstractSquareMatrix]] = None,
   _conversions: Optional[DiffusionModelConversions] = None,
 ) -> Float[Array, 'D']:
+  r"""
+  Corrects the SDE drift when changing the noise schedule to ensure that the
+  marginal distributions are preserved. The transformation is given by the
+  expression
+  $b_t'(x_t) = b_t(x_t) + 0.5(L_t' L_t'^\top - L_t L_t^\top) \nabla \log p_t(x_t)$
+  where $L_t'$ is the new diffusion coefficient. This ensures that infinitely
+  many different stochastic processes can share the same marginal distributions
+  as established in the theoretical framework.
+  """
   if noise_schedule is None:
     return drift
   conversions = _conversions or DiffusionModelConversions(components, t)
@@ -338,9 +512,12 @@ def probability_path_transition(
   t: Scalar,
   s: Scalar,
 ) -> GaussianTransition:
-  """
-  If components_t is p(x_t | y_1) and components_s is p(x_s | y_1), then this function returns a GaussianTransition
-  that is p(x_t | x_s).
+  r"""
+  Computes the Gaussian transition distribution $p(x_t | x_s, y_1)$ between two
+  marginal distributions of a stochastic bridge at different times. The
+  resulting distribution is $N(x_t | A_{t|s} x_s + u_{t|s}, \Sigma_{t|s})$ where
+  the parameters satisfy the composition of the forward transition and backward
+  messages.
   """
   y1_to_marginal_mean_t = Y1ToMarginalMean(components_t, t)
   y1_to_marginal_mean_s = Y1ToMarginalMean(components_s, s)

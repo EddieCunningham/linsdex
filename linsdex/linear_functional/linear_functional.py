@@ -152,6 +152,7 @@ def resolve_linear_functional(pytree: PyTree, x: Float[Array, 'D']) -> PyTree:
 
   return jax.tree_util.tree_map(resolve, pytree, is_leaf=is_leaf)
 
+@auto_vmap
 @dispatch
 def mat_mul(A: AbstractSquareMatrix, B: LinearFunctional) -> LinearFunctional:
   return LinearFunctional(A @ B.A, A @ B.b)

@@ -180,6 +180,13 @@ class AbstractMatrixTest(abc.ABC):
         expected_log_det = jnp.linalg.slogdet(A.as_matrix())[1]
         self.assertTrue(jnp.allclose(log_det, expected_log_det))
 
+    def test_trace(self):
+        A = self.create_random_matrix(self.key)
+
+        trace = A.get_trace()
+        expected_trace = jnp.trace(A.as_matrix())
+        self.assertTrue(jnp.allclose(trace, expected_trace))
+
     def test_cholesky(self):
         A = self.create_random_symmetric_matrix(self.key)
 
@@ -386,6 +393,20 @@ def autodiff_for_matrix_class(create_diagonal_fn):
     grad_logdet = create_diagonal_fn(grad_logdet_raw, TAGS.no_tags)
     expected_grad_logdet = create_diagonal_fn(expected_grad_logdet_raw, TAGS.no_tags)
     assert jnp.allclose(grad_logdet.as_matrix(), expected_grad_logdet.as_matrix())
+
+    # Trace
+    def trace_fn(x):
+        A = create_A(x)
+        return A.get_trace()
+
+    def direct_trace_fn(x):
+        return jnp.trace(x)
+
+    grad_trace_raw = grad(trace_fn)(A_raw)
+    expected_grad_trace_raw = grad(direct_trace_fn)(A_raw)
+    grad_trace = create_diagonal_fn(grad_trace_raw, TAGS.no_tags)
+    expected_grad_trace = create_diagonal_fn(expected_grad_trace_raw, TAGS.no_tags)
+    assert jnp.allclose(grad_trace.as_matrix(), expected_grad_trace.as_matrix())
 
     # Cholesky
     def cholesky_fn(x):

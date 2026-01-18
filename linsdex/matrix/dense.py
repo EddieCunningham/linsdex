@@ -174,6 +174,12 @@ def get_cholesky(A: DenseMatrix) -> DenseMatrix:
 ################################################################################################################
 
 @dispatch
+def get_trace(A: DenseMatrix) -> Scalar:
+  return jnp.trace(A.elements, axis1=-1, axis2=-2)
+
+################################################################################################################
+
+@dispatch
 def get_exp(A: DenseMatrix) -> DenseMatrix:
   expA = jax.scipy.linalg.expm(A.elements)
   out_tags = A.tags.exp_update()

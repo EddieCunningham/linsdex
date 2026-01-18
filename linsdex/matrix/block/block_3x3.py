@@ -434,6 +434,12 @@ def get_log_det(A: Block3x3Matrix, mask: Optional[Bool[Array, 'D']] = None) -> S
 ################################################################################################################
 
 @dispatch
+def get_trace(A: Block3x3Matrix) -> Scalar:
+  return A.matrices[0, 0].get_trace() + A.matrices[1, 1].get_trace() + A.matrices[2, 2].get_trace()
+
+################################################################################################################
+
+@dispatch
 def get_cholesky(A: Block3x3Matrix) -> Block3x3Matrix:
   m11, m12, m13, m21, m22, m23, m31, m32, m33 = A.matrices[0,0], A.matrices[0,1], A.matrices[0,2], A.matrices[1,0], A.matrices[1,1], A.matrices[1,2], A.matrices[2,0], A.matrices[2,1], A.matrices[2,2]
 

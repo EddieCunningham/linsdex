@@ -117,6 +117,12 @@ def matrix_tests(key, A, B):
   if matrices_equal(log_det, log_det_dense) == False:
     raise ValueError(f"Log determinant test failed.  Expected {log_det}, got {log_det_dense}")
 
+  # Check the trace
+  trace = J.get_trace()
+  trace_dense = jnp.trace(J_dense, axis1=-1, axis2=-2)
+  if matrices_equal(trace, trace_dense) == False:
+    raise ValueError(f"Trace test failed.  Expected {trace}, got {trace_dense}")
+
   # Check the SVD
   (U, s, V) = J.get_svd()
   U_dense, s_dense, V_dense = jnp.linalg.svd(J_dense)

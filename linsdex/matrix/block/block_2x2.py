@@ -380,6 +380,12 @@ def get_log_det(A: Block2x2Matrix, mask: Optional[Bool[Array, 'D']] = None) -> S
 ################################################################################################################
 
 @dispatch
+def get_trace(A: Block2x2Matrix) -> Scalar:
+  return A.matrices[0, 0].get_trace() + A.matrices[1, 1].get_trace()
+
+################################################################################################################
+
+@dispatch
 def get_cholesky(A: Block2x2Matrix) -> Block2x2Matrix:
   a, b, bT, d = A.matrices[0,0], A.matrices[0,1], A.matrices[1,0], A.matrices[1,1]
   b = 0.5*(b + bT.T)

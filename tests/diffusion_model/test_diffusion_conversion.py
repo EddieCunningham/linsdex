@@ -3,7 +3,7 @@ import jax
 jax.config.update('jax_enable_x64', True)
 import jax.numpy as jnp
 from jax import random
-from linsdex.diffusion_model.diffusion_conversion import DiffusionModelComponents, probability_path_transition
+from linsdex.diffusion_model.diffusion_conversion import DiffusionModelComponents, ProbabilityPath, probability_path_transition
 from linsdex.diffusion_model.diffusion_conversion import DiffusionModelConversions, Y1ToBwdMean, Y1ToMarginalMean
 from linsdex import OrnsteinUhlenbeck, empirical_dist, w2_distance, LinearTimeInvariantSDE
 from linsdex.sde.conditioned_linear_sde import ConditionedLinearSDE
@@ -20,7 +20,7 @@ from linsdex.sde.sde_base import AbstractLinearSDE
 from linsdex.linear_functional.linear_functional import LinearFunctional
 from linsdex.linear_functional.functional_ops import resolve_functional
 from linsdex.matrix.matrix_base import AbstractSquareMatrix
-
+import equinox as eqx
 
 @pytest.fixture
 def key():
@@ -153,6 +153,27 @@ class TestDiffusionHubConversions:
 
         assert jnp.allclose(marginal.mu, marginal_recon.mu, atol=1e-5)
         assert jnp.allclose(marginal.Sigma.as_matrix(), marginal_recon.Sigma.as_matrix(), atol=1e-5)
+
+    def test_diffusion_path_quantities_properties(self, components_fixture, request, key):
+        """Test the properties of DiffusionPathQuantities."""
+        diffusion_components = request.getfixturevalue(components_fixture)
+        t = 0.5
+        quantities = ProbabilityPath(diffusion_components, t)
+
+        # Test beta_precision property
+        assert jtu.tree_all(jtu.tree_map(jnp.allclose, quantities.beta_precision.as_matrix(), quantities.virtual_beta_t.J.as_matrix()))
+
+        # Test y1_to_marginal_mean property
+        y1_to_marginal_mean = quantities.y1_to_marginal_mean
+        assert isinstance(y1_to_marginal_mean, LinearFunctional)
+        # Compare to direct calculation
+        expected_mu = quantities.virtual_pt_given_y1.to_mixed().mu
+        assert jtu.tree_all(jtu.tree_map(jnp.allclose, y1_to_marginal_mean, expected_mu))
+
+        # Test marginal_precision property
+        marginal_precision = quantities.marginal_precision
+        expected_precision = quantities.virtual_pt_given_y1.Sigma.get_inverse()
+        assert jtu.tree_all(jtu.tree_map(jnp.allclose, marginal_precision.as_matrix(), expected_precision.as_matrix()))
 
     def test_y1_score_conversion(self, components_fixture, request, key):
         """Test y1 -> score conversion matches equivalent paths."""
@@ -432,19 +453,23 @@ class TestDiffusionHubConversions:
 
 
 def test_transition_precomputation(key):
+  from linsdex.crf import CRF
+  from linsdex.crf.continuous_crf import DiscretizeResult
+  from linsdex.series.interleave_times import InterleavedTimes
+  from linsdex.util.parallel_scan import parallel_scan
   dim = 2
   t0, t1 = 0.0, 1.0
   k1, k2, k3, k4, k5, k6, k7, k8 = random.split(key, 8)
 
-  F_mat = DenseMatrix(random.normal(k1, (dim, dim)))
-  L_mat = DenseMatrix(random.normal(k2, (dim, dim)))
+  F_mat = DiagonalMatrix(random.normal(k1, (dim,)))
+  L_mat = DiagonalMatrix(random.normal(k2, (dim,)))
   sde = LinearTimeInvariantSDE(F=F_mat, L=L_mat)
 
   prior_mu = random.normal(k3, (dim,))
   prior_sigma = DiagonalMatrix(jnp.exp(random.normal(k4, (dim,))))
   prior = StandardGaussian(mu=prior_mu, Sigma=prior_sigma)
 
-  evidence_cov = DiagonalMatrix(jnp.exp(random.normal(k5, (dim,))))
+  evidence_cov = DiagonalMatrix.zeros(dim)
 
   components = DiffusionModelComponents(
     linear_sde=sde,
@@ -454,14 +479,94 @@ def test_transition_precomputation(key):
     evidence_cov=evidence_cov
   )
 
-  y_1 = random.normal(k6, (dim,))
-  t = random.uniform(k7, minval=t0 + 1e-3, maxval=t1 - 1e-3)
-  epsilon = random.normal(k8, (dim,))
+  ProbabilityPath(components, t0)
 
-  linear_sde: AbstractLinearSDE = components.linear_sde
-  conditioned_sde: ConditionedLinearSDE = linear_sde.condition_on_starting_point(1.0, y_1)
+  n_times = 4
+  times = jnp.linspace(t0, t1, n_times)
+
+  # Get the quantities at each time step so that we can get p(x_t | y_1)
+  def get_quantities(t) -> ProbabilityPath:
+    return ProbabilityPath(components, t)
+
+  virtual_quantities: ProbabilityPath = eqx.filter_vmap(get_quantities)(times)
+  virtual_pts_given_y1: StandardGaussian = virtual_quantities.virtual_pt_given_y1
+
+  from linsdex.potential.gaussian.transition import virtual_potential_to_transition
+  transitions: GaussianTransition = eqx.filter_vmap(virtual_potential_to_transition)(virtual_pts_given_y1)
+  reversed_transitions: GaussianTransition = transitions.swap_variables()
+
+  n_samples = 1024
+  keys = random.split(key, (n_samples, n_times))
+  virtual_samples = eqx.filter_vmap(virtual_pts_given_y1.sample)(keys)
+
+  # Take a y1 to fill the samples with
+  y1 = random.normal(k6, (dim,))
+
+  samples: Float[Array, 'D'] = virtual_samples(y1)
+
+  assert samples.shape == (n_samples, n_times, dim)
+
+  # Compute Wasserstein-2 distance between empirical distributions and the prior
+  def compute_w2(samples_at_t):
+    emp_dist = empirical_dist(samples_at_t)
+    return emp_dist, w2_distance(emp_dist, prior)
+
+  empirical_dists, w2_distances = jax.vmap(compute_w2, in_axes=1)(samples)
+  print(f"W2 distances to prior: {w2_distances}")
+
+  # Check that at t=0, the W2 distance to the prior is very small
+  assert w2_distances[0] < 1e-2
 
 
+
+def test_auto_vmap_unbatched_args(key):
+  """Specifically test that auto_vmap handles unbatched arguments correctly.
+  This would have caught the original failure where auto_vmap was too aggressive."""
+  dim = 2
+  # Create a batched LinearFunctional (batch size 10)
+  A = DiagonalMatrix(jnp.ones((10, dim)))
+  b = jnp.zeros((10, dim))
+  lf = LinearFunctional(A, b)
+
+  # Unbatched input
+  x = jnp.ones(dim)
+
+  # This direct call should work and handle the batching of 'lf' automatically
+  out: Float[Array, '10 D'] = lf(x)
+  assert out.shape == (10, dim)
+  assert jnp.allclose(out, 1.0)
+
+
+def test_diffusion_marginal_at_t0_matches_prior(key):
+  """Verify that the marginal distribution at t=t0 matches the prior.
+  This would have caught the numerical instability and logical error in DiffusionPathQuantities."""
+  dim = 2
+  t0, t1 = 0.0, 1.0
+  sde = OrnsteinUhlenbeck(dim=dim, sigma=1.0, lambda_=1.0)
+  prior = StandardGaussian(mu=jnp.ones(dim), Sigma=DiagonalMatrix.eye(dim))
+  evidence_cov = DiagonalMatrix.zeros(dim)
+
+  components = DiffusionModelComponents(
+    linear_sde=sde,
+    t0=t0,
+    x_t0_prior=prior,
+    t1=t1,
+    evidence_cov=evidence_cov
+  )
+
+  # Get quantities exactly at t=t0
+  quantities = ProbabilityPath(components, t0)
+  p_xt0_given_y1_functional = quantities.virtual_pt_given_y1
+
+  # Resolve the functional with an arbitrary y1
+  y1 = jnp.zeros(dim)
+  p_xt0_given_y1 = resolve_functional(p_xt0_given_y1_functional, y1)
+
+  # At t=t0, if we haven't incorporated any y1 yet, it should exactly match the prior
+  # Note: DiffusionPathQuantities incorporates y1 via the bridge formula.
+  # If we want to check that it matches the prior at t=0, we need to ensure the formula is stable.
+  dist = w2_distance(p_xt0_given_y1, prior)
+  assert dist < 1e-10
 
 
 def create_random_linear_functional(key, dim):

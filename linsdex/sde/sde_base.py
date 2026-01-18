@@ -260,11 +260,15 @@ class AbstractLinearTimeInvariantSDE(AbstractLinearSDE, abc.ABC):
 
       if isinstance(self.F, DiagonalMatrix):
         # This is simple
-        A = (self.F*dt).get_exp()
-        AinvT = (-self.F.T*dt).get_exp()
+        A_elements = jnp.exp(self.F.elements * dt)
+        two_F = 2 * self.F.elements
+        Sigma_elements = self.L.elements**2 * (jnp.exp(two_F * dt) - 1) / two_F
+        # Handle the case where F_ii is very close to 0
+        Sigma_elements = jnp.where(jnp.abs(two_F) < 1e-8, self.L.elements**2 * dt, Sigma_elements)
+        A = DiagonalMatrix(A_elements)
+        AinvT = DiagonalMatrix(1/A_elements)
         A = MatrixWithInverse(A, AinvT.T)
-        Sigma_AinvT = self.L@self.L.T*dt
-        Sigma = self.L@self.L.T@A.T*dt
+        Sigma = DiagonalMatrix(Sigma_elements)
 
       elif isinstance(self.F, Block2x2Matrix) or \
            isinstance(self.F, Block3x3Matrix) or \

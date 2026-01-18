@@ -38,7 +38,24 @@ def auto_vmap(f):
   @wraps(f)
   def f_wrapper(self, *args, **kwargs):
     if self.batch_size:
-      return eqx.filter_vmap(lambda s, a: f_wrapper(s, *a, **kwargs))(self, args)
+      if isinstance(self.batch_size, tuple):
+        axis_size = self.batch_size[0]
+      else:
+        axis_size = self.batch_size
+
+      def get_in_axis(arg):
+        if eqx.is_array(arg):
+          return 0 if arg.ndim > 0 and arg.shape[0] == axis_size else None
+        return None
+
+      in_axes_self = jtu.tree_map(get_in_axis, self)
+      in_axes_args = jtu.tree_map(get_in_axis, args)
+      in_axes_kwargs = jtu.tree_map(get_in_axis, kwargs)
+
+      return eqx.filter_vmap(
+          lambda s, a, k: f_wrapper(s, *a, **k),
+          in_axes=(in_axes_self, in_axes_args, in_axes_kwargs)
+      )(self, args, kwargs)
     return f(self, *args, **kwargs)
   return f_wrapper
 

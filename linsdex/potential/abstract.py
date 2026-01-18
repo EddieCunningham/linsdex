@@ -286,7 +286,7 @@ class AbstractTransition(AbstractBatchableObject, abc.ABC):
     Returns:
       A zero-information potential of the same type
     """
-    out_type = self.update_y(potential).prior
+    out_type = self.update_and_marginalize_out_y(potential)
     return out_type.total_uncertainty_like(out_type)
 
 ################################################################################################################
