@@ -56,10 +56,10 @@ def get_integrated_marginal_given_y1(
   """
   evidence_precision = evidence_cov.get_inverse()
 
-  # Create the virtual potential over x_{t0}.
+  # Create the functional potential over x_{t0}.
   I, zero = DiagonalMatrix.eye(base_sde.dim), jnp.zeros(base_sde.dim)
   inf_precision = evidence_precision.set_inf() # This is to ensure that the distribution at t0 is exactly the prior
-  virtual_phi_t0 = MixedGaussian(LinearFunctional(I, zero), inf_precision)
+  functional_phi_t0 = MixedGaussian(LinearFunctional(I, zero), inf_precision)
 
   # Create the potential over x_{t1}
   phi_t1 = MixedGaussian(y1, evidence_precision)
@@ -69,7 +69,7 @@ def get_integrated_marginal_given_y1(
   phi_t1gt = base_sde.get_transition_distribution(t, t1)
 
   # Compute p(x_t | y_{t0}; y_{t1})
-  alpha_t: MixedGaussian = phi_tgt0.update_and_marginalize_out_x(virtual_phi_t0) # Mean is a linear functional
+  alpha_t: MixedGaussian = phi_tgt0.update_and_marginalize_out_x(functional_phi_t0) # Mean is a linear functional
   beta_t: MixedGaussian = phi_t1gt.update_and_marginalize_out_y(phi_t1)
   p_xt_given_y0_and_y1: StandardGaussian = (alpha_t + beta_t).to_std()
 
@@ -128,22 +128,22 @@ class Y1ToBwdMean(LinearFunctional):
   ):
     evidence_precision = evidence_cov.get_inverse()
 
-    # Create the virtual potential over x_{t0}.
+    # Create the functional potential over x_{t0}.
     I, zero = DiagonalMatrix.eye(base_sde.dim), jnp.zeros(base_sde.dim)
     no_op_lf = LinearFunctional(I, zero)
 
-    # Create the (virtual) potential over x_{t1}.  Don't fill with the evidence yet because we will want to return the mapping from y1 to bwd
-    virtual_phi_t1 = MixedGaussian(no_op_lf, evidence_precision)
+    # Create the (functional) potential over x_{t1}.  Don't fill with the evidence yet because we will want to return the mapping from y1 to bwd
+    functional_phi_t1 = MixedGaussian(no_op_lf, evidence_precision)
 
     # Get the transition distributions from t to t1
     phi_t1gt = base_sde.get_transition_distribution(t, t1)
 
     # Compute p(x_t | y_{t0}; y_{t1})
-    virtual_beta_t: MixedGaussian = phi_t1gt.update_and_marginalize_out_y(virtual_phi_t1)
+    functional_beta_t: MixedGaussian = phi_t1gt.update_and_marginalize_out_y(functional_phi_t1)
 
-    self.A = virtual_beta_t.mu.A
-    self.b = virtual_beta_t.mu.b
-    self.precision = virtual_beta_t.J
+    self.A = functional_beta_t.mu.A
+    self.b = functional_beta_t.mu.b
+    self.precision = functional_beta_t.J
 
 class Y1ToMarginalMean(LinearFunctional):
   """
@@ -172,36 +172,36 @@ class Y1ToMarginalMean(LinearFunctional):
     x_t0_prior_std: StandardGaussian = x_t0_prior.to_std()
     m, P = x_t0_prior_std.mu, x_t0_prior_std.Sigma
 
-    # Create the virtual potentials.  We are mostly just interested in their covariances
-    virtual_phi_t0 = MixedGaussian(no_op_lf, evidence_precision.set_inf())
-    virtual_phi_t1 = MixedGaussian(no_op_lf, evidence_precision)
+    # Create the functional potentials.  We are mostly just interested in their covariances
+    functional_phi_t0 = MixedGaussian(no_op_lf, evidence_precision.set_inf())
+    functional_phi_t1 = MixedGaussian(no_op_lf, evidence_precision)
 
     # Get the transition distributions between t0 and t, and t and t1
     phi_tgt0 = base_sde.get_transition_distribution(t0, t)
     phi_t1gt = base_sde.get_transition_distribution(t, t1)
 
     # Compute p(x_t | x_0, y_1)
-    virtual_alpha_t: MixedGaussian = phi_tgt0.update_and_marginalize_out_x(virtual_phi_t0) # Mean is a linear functional
-    virtual_beta_t:  MixedGaussian = phi_t1gt.update_and_marginalize_out_y(virtual_phi_t1) # Mean is a linear functional
+    functional_alpha_t: MixedGaussian = phi_tgt0.update_and_marginalize_out_x(functional_phi_t0) # Mean is a linear functional
+    functional_beta_t:  MixedGaussian = phi_t1gt.update_and_marginalize_out_y(functional_phi_t1) # Mean is a linear functional
 
     # This is a hack to marginalize out x0.  The math ends up working out if we plug the prior mean into
     # the forward message.  The only thing that we will need to do is compute the correction term for the covariance.
-    p_xt_given_x0_and_y1: Callable[[Float[Array, 'D']], StandardGaussian] = (virtual_alpha_t(m) + virtual_beta_t).to_std()
+    p_xt_given_x0_and_y1: Callable[[Float[Array, 'D']], StandardGaussian] = (functional_alpha_t(m) + functional_beta_t).to_std()
 
     # Unpack the parameters of the forward message
-    At_alpha = virtual_alpha_t.mu.A
-    Jt_alpha = virtual_alpha_t.J
+    At_alpha = functional_alpha_t.mu.A
+    Jt_alpha = functional_alpha_t.J
 
     # Construct the correction matrix for the covariance
     At_alpha_beta = p_xt_given_x0_and_y1.Sigma@Jt_alpha@At_alpha
     corrected_covariance = p_xt_given_x0_and_y1.Sigma + At_alpha_beta@P@At_alpha.T
 
     # Construct the correct marginal distribution
-    virtual_pt_given_y1 = StandardGaussian(p_xt_given_x0_and_y1.mu, corrected_covariance)
+    functional_pt_given_y1 = StandardGaussian(p_xt_given_x0_and_y1.mu, corrected_covariance)
 
-    self.A = virtual_pt_given_y1.mu.A
-    self.b = virtual_pt_given_y1.mu.b
-    self.precision = virtual_pt_given_y1.Sigma.get_inverse()
+    self.A = functional_pt_given_y1.mu.A
+    self.b = functional_pt_given_y1.mu.b
+    self.precision = functional_pt_given_y1.Sigma.get_inverse()
 
 def y1_to_drift(
   base_sde: AbstractLinearSDE,
@@ -305,14 +305,14 @@ def score_to_bwd_linear_functional(
 ) -> MatchingConversion:
   evidence_precision = evidence_cov.get_inverse()
 
-  # Create the virtual potential over x_{t0}.
+  # Create the functional potential over x_{t0}.
   I, zero = DiagonalMatrix.eye(base_sde.dim), jnp.zeros(base_sde.dim)
   inf_precision = evidence_precision.set_inf() # This is to ensure that the distribution at t0 is exactly the prior
   no_op_lf = LinearFunctional(I, zero)
-  virtual_phi_t0 = MixedGaussian(no_op_lf, inf_precision)
+  functional_phi_t0 = MixedGaussian(no_op_lf, inf_precision)
 
-  # Create the (virtual) potential over x_{t1}.  Don't fill with the evidence yet because we will want to return the mapping from y1 to bwd
-  virtual_phi_t1 = MixedGaussian(no_op_lf, evidence_precision)
+  # Create the (functional) potential over x_{t1}.  Don't fill with the evidence yet because we will want to return the mapping from y1 to bwd
+  functional_phi_t1 = MixedGaussian(no_op_lf, evidence_precision)
   # phi_t1 = MixedGaussian(y1, evidence_precision)
 
   # Get the transition distributions between t0 and t, and t and t1
@@ -320,10 +320,10 @@ def score_to_bwd_linear_functional(
   phi_t1gt = base_sde.get_transition_distribution(t, t1)
 
   # Compute p(x_t | y_{t0}; y_{t1})
-  virtual_alpha_t: MixedGaussian = phi_tgt0.update_and_marginalize_out_x(virtual_phi_t0) # Mean is a linear functional
-  virtual_beta_t: MixedGaussian = phi_t1gt.update_and_marginalize_out_y(virtual_phi_t1)
-  beta_t: MixedGaussian = resolve_functional(virtual_beta_t, y1)
-  p_xt_given_y0_and_y1: StandardGaussian = (virtual_alpha_t + beta_t).to_std()
+  functional_alpha_t: MixedGaussian = phi_tgt0.update_and_marginalize_out_x(functional_phi_t0) # Mean is a linear functional
+  functional_beta_t: MixedGaussian = phi_t1gt.update_and_marginalize_out_y(functional_phi_t1)
+  beta_t: MixedGaussian = resolve_functional(functional_beta_t, y1)
+  p_xt_given_y0_and_y1: StandardGaussian = (functional_alpha_t + beta_t).to_std()
 
   # The mean of the marginal distribution is a linear function dependent on y_{t0}
   mu_t: LinearFunctional = p_xt_given_y0_and_y1.mu # = A@y_{t0} + b
@@ -364,7 +364,7 @@ def score_to_bwd_linear_functional(
 
   #########################################################
   # y1 to bwd message
-  y1_to_bwd: Callable[[Float[Array, 'D']], MixedGaussian] = virtual_beta_t # y1_to_bwd(y1) = bwd
+  y1_to_bwd: Callable[[Float[Array, 'D']], MixedGaussian] = functional_beta_t # y1_to_bwd(y1) = bwd
 
   #########################################################
   # Get the conversions that we'd use in practice
@@ -390,7 +390,7 @@ class ForwardSDE(AbstractLinearSDE):
   phi_t0: MixedGaussian
 
   t1: Scalar
-  virtual_phi_t1: MixedGaussian
+  functional_phi_t1: MixedGaussian
 
   y_t1_prior: AbstractGaussianPotential
 
@@ -414,14 +414,14 @@ class ForwardSDE(AbstractLinearSDE):
 
     self.base_sde = base_sde
 
-    # Construct the virtual evidence.  We have real evidence at t0 (y0), but at t1, we only have a prior over
+    # Construct the functional evidence.  We have real evidence at t0 (y0), but at t1, we only have a prior over
     # an variable.  To be general, we can represent y_t1 by a trivial linear functional, lf(y_t1) = I@y_t1 + 0.
     self.t0 = t0
     self.phi_t0 = MixedGaussian(y0, self.evidence_precision)
 
     self.t1 = t1
     lfT = LinearFunctional(DiagonalMatrix.eye(xdim), jnp.zeros(xdim))
-    self.virtual_phi_t1 = MixedGaussian(lfT, self.evidence_precision)
+    self.functional_phi_t1 = MixedGaussian(lfT, self.evidence_precision)
 
     self.y_t1_prior = y_t1_prior
 
@@ -440,7 +440,7 @@ class ForwardSDE(AbstractLinearSDE):
       1: Compute p(x_t | y_{t0}, y_{t1})
       2: Compute the Bayes estimate of the mean of p(y_{t1} | x_t, y_{t0})
       3: Get the Bayes estimate of the backward message at t
-      4: Get the virtual parameters of the conditioned SDE
+      4: Get the functional parameters of the conditioned SDE
       5: Unpack the linear functional to apply a final correction
 
     All of these require message passing, which we will do explicitly instead of using the helpers in this library
@@ -453,7 +453,7 @@ class ForwardSDE(AbstractLinearSDE):
     ##########################################
     # 1: Compute p(x_t | y_{t0}, y_{t1})
     ##########################################
-    beta_t: MixedGaussian = phi_t1gt.update_and_marginalize_out_y(self.virtual_phi_t1) # Mean is a linear functional
+    beta_t: MixedGaussian = phi_t1gt.update_and_marginalize_out_y(self.functional_phi_t1) # Mean is a linear functional
     alpha_t: MixedGaussian = phi_tgt0.update_and_marginalize_out_x(self.phi_t0)
     p_t: StandardGaussian = (alpha_t + beta_t).to_std()
 
@@ -487,7 +487,7 @@ class ForwardSDE(AbstractLinearSDE):
     h_beta_t_bayes_estimate: LinearFunctional = beta_t_bayes_estimate.h
 
     ##########################################
-    # 4: Get the virtual parameters of the conditioned SDE
+    # 4: Get the functional parameters of the conditioned SDE
     ##########################################
     F, u, L = self.base_sde.get_params(t)
     LLT = L@L.T

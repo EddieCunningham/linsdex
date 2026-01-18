@@ -320,8 +320,8 @@ class GaussianTransition(AbstractTransition):
 ################################################################################################################
 
 @auto_vmap
-def virtual_potential_to_transition(potential: AbstractGaussianPotential) -> GaussianTransition:
-  """Convert a virtual potential to a transition"""
+def functional_potential_to_transition(potential: AbstractGaussianPotential) -> GaussianTransition:
+  """Convert a functional potential to a transition"""
   potential_std: StandardGaussian = potential.to_std()
 
   A = potential_std.mu.A

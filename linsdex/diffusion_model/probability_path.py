@@ -30,7 +30,7 @@ while sampling or performing inference in another.
 import jax
 import jax.numpy as jnp
 from typing import Optional, Callable
-from jaxtyping import Array, Float, Scalar
+from jaxtyping import Array, Float, Scalar, PRNGKeyArray
 from linsdex.series.batchable_object import AbstractBatchableObject, auto_vmap
 from linsdex.matrix.matrix_base import AbstractSquareMatrix
 from linsdex.potential.gaussian.dist import MixedGaussian, StandardGaussian
@@ -79,8 +79,8 @@ class ProbabilityPath(AbstractBatchableObject):
   By precomputing these Gaussian distributions, we avoid redundant calculations
   when converting between different model parameterizations.
   """
-  virtual_beta_t: MixedGaussian
-  virtual_pt_given_y1: StandardGaussian
+  functional_beta_t: MixedGaussian
+  functional_pt_given_y1: StandardGaussian
 
   def __init__(self, components: DiffusionModelComponents, t: Scalar):
     evidence_precision = components.evidence_cov.get_inverse()
@@ -88,9 +88,9 @@ class ProbabilityPath(AbstractBatchableObject):
     no_op_lf = LinearFunctional(I, zero)
 
     # --- Backward message quantities (from Y1ToBwdMean) ---
-    virtual_phi_t1 = MixedGaussian(no_op_lf, evidence_precision)
+    functional_phi_t1 = MixedGaussian(no_op_lf, evidence_precision)
     phi_t1gt = components.linear_sde.get_transition_distribution(t, components.t1)
-    self.virtual_beta_t = phi_t1gt.update_and_marginalize_out_y(virtual_phi_t1)
+    self.functional_beta_t = phi_t1gt.update_and_marginalize_out_y(functional_phi_t1)
 
     # --- Marginal distribution quantities (from Y1ToMarginalMean) ---
     phi_tgt0 = components.linear_sde.get_transition_distribution(components.t0, t)
@@ -102,7 +102,7 @@ class ProbabilityPath(AbstractBatchableObject):
 
     # 1. Incorporate the future evidence y_1 into the transition p(x_t | x_0)
     # This gives the joint p(x_t, x_0 | y_1) = p(x_t | x_0, y_1) p(y_1 | x_0)
-    joint_xt_x0 = phi_tgt0.update_y(self.virtual_beta_t)
+    joint_xt_x0 = phi_tgt0.update_y(self.functional_beta_t)
 
     # 2. Extract the bridge transition p(x_t | x_0, y_1)
     bridge_transition = joint_xt_x0.transition
@@ -111,23 +111,27 @@ class ProbabilityPath(AbstractBatchableObject):
     # This computes \int p(x_t | x_0, y_1) p(x_0) dx_0
     p_xt_bridge = bridge_transition.update_and_marginalize_out_x(components.x_t0_prior)
 
-    self.virtual_pt_given_y1 = p_xt_bridge.to_std()
+    self.functional_pt_given_y1 = p_xt_bridge.to_std()
 
   @property
   def y1_to_marginal_mean(self) -> LinearFunctional:
-    return self.virtual_pt_given_y1.to_mixed().mu
+    return self.functional_pt_given_y1.to_mixed().mu
 
   @property
   def marginal_precision(self) -> AbstractSquareMatrix:
-    return self.virtual_pt_given_y1.Sigma.get_inverse()
+    return self.functional_pt_given_y1.Sigma.get_inverse()
 
   @property
   def beta_precision(self) -> AbstractSquareMatrix:
-    return self.virtual_beta_t.J
+    return self.functional_beta_t.J
 
   @property
   def batch_size(self):
-    return self.virtual_beta_t.batch_size
+    return self.functional_beta_t.batch_size
+
+  def sample_functional_xt(self, key: PRNGKeyArray) -> LinearFunctional:
+
+    return self.functional_pt_given_y1._sample(key)
 
 class Y1ToBwdMean(LinearFunctional):
   """
@@ -147,9 +151,9 @@ class Y1ToBwdMean(LinearFunctional):
     if _quantities is None:
       _quantities = ProbabilityPath(components, t)
 
-    self.A = _quantities.virtual_beta_t.mu.A
-    self.b = _quantities.virtual_beta_t.mu.b
-    self.precision = _quantities.virtual_beta_t.J
+    self.A = _quantities.functional_beta_t.mu.A
+    self.b = _quantities.functional_beta_t.mu.b
+    self.precision = _quantities.functional_beta_t.J
 
 class Y1ToMarginalMean(LinearFunctional):
   """
@@ -228,15 +232,15 @@ class DiffusionModelConversions(AbstractBatchableObject):
     """
     Maps the terminal evidence to the backward message at the current time.
     """
-    y1_to_bwd_mean_lf = LinearFunctional(self.quantities.virtual_beta_t.mu.A, self.quantities.virtual_beta_t.mu.b)
+    y1_to_bwd_mean_lf = LinearFunctional(self.quantities.functional_beta_t.mu.A, self.quantities.functional_beta_t.mu.b)
     bwd_mean = y1_to_bwd_mean_lf(y1)
-    return MixedGaussian(bwd_mean, self.quantities.virtual_beta_t.J)
+    return MixedGaussian(bwd_mean, self.quantities.functional_beta_t.J)
 
   def bwd_message_to_y1(self, bwd_message: MixedGaussian) -> Float[Array, 'D']:
     """
     Maps the backward message at the current time to the terminal evidence.
     """
-    y1_to_bwd_mean_lf = LinearFunctional(self.quantities.virtual_beta_t.mu.A, self.quantities.virtual_beta_t.mu.b)
+    y1_to_bwd_mean_lf = LinearFunctional(self.quantities.functional_beta_t.mu.A, self.quantities.functional_beta_t.mu.b)
     bwd_mean_to_y1 = y1_to_bwd_mean_lf.get_inverse()
     return bwd_mean_to_y1(bwd_message.mu)
 
@@ -292,7 +296,7 @@ class DiffusionModelConversions(AbstractBatchableObject):
     F, u, L = self.components.linear_sde.get_params(self.t)
     LLT = L @ L.T
     bwd_score = LLT.solve(drift - F @ xt - u)
-    bwd_precision = self.quantities.virtual_beta_t.J
+    bwd_precision = self.quantities.functional_beta_t.J
     bwd_mean = bwd_precision.solve(bwd_score) + xt
     return MixedGaussian(bwd_mean, bwd_precision)
 
@@ -300,7 +304,7 @@ class DiffusionModelConversions(AbstractBatchableObject):
     """
     Maps the standard normal noise to the backward message at the current state.
     """
-    bwd_precision = self.quantities.virtual_beta_t.J
+    bwd_precision = self.quantities.functional_beta_t.J
     L_chol = bwd_precision.get_cholesky()
     bwd_mean = xt - bwd_precision.solve(L_chol@epsilon)
     return MixedGaussian(bwd_mean, bwd_precision)
@@ -309,7 +313,7 @@ class DiffusionModelConversions(AbstractBatchableObject):
     """
     Maps the backward message at the current state to the standard normal noise.
     """
-    bwd_precision = self.quantities.virtual_beta_t.J
+    bwd_precision = self.quantities.functional_beta_t.J
     L_chol = bwd_precision.get_cholesky()
     return L_chol.T @ (xt - bwd_message.mu)
 
