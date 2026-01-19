@@ -336,10 +336,10 @@ class FlowItems(AbstractBatchableObject):
   score: Float[Array, 'D']
   noise: Float[Array, 'D']
   drift: Float[Array, 'D']
-  fwd_score: Float[Array, 'D']
-  bwd_score: Float[Array, 'D']
-  fwd_mean: Float[Array, 'D']
-  bwd_mean: Float[Array, 'D']
+  fwd_score: Optional[Float[Array, 'D']] = None
+  bwd_score: Optional[Float[Array, 'D']] = None
+  fwd_mean: Optional[Float[Array, 'D']] = None
+  bwd_mean: Optional[Float[Array, 'D']] = None
 
   @property
   def batch_size(self) -> Union[None,int,Tuple[int]]:

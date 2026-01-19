@@ -160,7 +160,7 @@ drift: Float[Array, "dim"] = conversions.y1_to_drift(y1_pred, xt)
 score: Float[Array, "dim"] = conversions.y1_to_score(xt, y1_pred)
 ```
 
-The `ProbabilityPath` class can be used to compute and cache time-dependent intermediate quantities, avoiding redundant computations when performing multiple conversions at the same time step. Additionally, `noise_schedule_drift_correction` allows for adjusting the drift when a different noise schedule is used at inference time compared to training.
+The `ProbabilityPathSlice` class can be used to compute and cache time-dependent intermediate quantities, avoiding redundant computations when performing multiple conversions at the same time step. Additionally, `noise_schedule_drift_correction` allows for adjusting the drift when a different noise schedule is used at inference time compared to training.
 
 ### Gaussian Potentials
 

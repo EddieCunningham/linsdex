@@ -29,16 +29,19 @@ while sampling or performing inference in another.
 """
 import jax
 import jax.numpy as jnp
-from typing import Optional, Callable
-from jaxtyping import Array, Float, Scalar, PRNGKeyArray
+from typing import Optional, Callable, Dict
+from jaxtyping import Array, Float, Scalar, PRNGKeyArray, PyTree
 from linsdex.series.batchable_object import AbstractBatchableObject, auto_vmap
 from linsdex.matrix.matrix_base import AbstractSquareMatrix
-from linsdex.potential.gaussian.dist import MixedGaussian, StandardGaussian
+from linsdex.potential.gaussian.dist import MixedGaussian, StandardGaussian, NaturalGaussian
 from linsdex.potential.gaussian.transition import GaussianTransition
 from linsdex.sde.sde_base import AbstractLinearSDE
 from linsdex.linear_functional.linear_functional import LinearFunctional
 from linsdex.matrix.diagonal import DiagonalMatrix
 from linsdex.linear_functional.functional_ops import resolve_functional
+from linsdex.potential.gaussian.dist import AbstractGaussianPotential
+
+from linsdex.sde.conditioned_linear_sde import FlowItems
 
 class DiffusionModelComponents(AbstractBatchableObject):
   """
@@ -58,7 +61,7 @@ class DiffusionModelComponents(AbstractBatchableObject):
   def batch_size(self):
     return self.linear_sde.batch_size
 
-class ProbabilityPath(AbstractBatchableObject):
+class ProbabilityPathSlice(AbstractGaussianPotential):
   r"""
   Computes and stores the intermediate probabilistic quantities for a diffusion
   model at a specific time. This class encapsulates the backward message
@@ -81,8 +84,13 @@ class ProbabilityPath(AbstractBatchableObject):
   """
   functional_beta_t: MixedGaussian
   functional_pt_given_y1: StandardGaussian
+  components: DiffusionModelComponents
+  t: Scalar
+  fwd: StandardGaussian
 
   def __init__(self, components: DiffusionModelComponents, t: Scalar):
+    self.components = components
+    self.t = t
     evidence_precision = components.evidence_cov.get_inverse()
     I, zero = DiagonalMatrix.eye(components.linear_sde.dim), jnp.zeros(components.linear_sde.dim)
     no_op_lf = LinearFunctional(I, zero)
@@ -94,6 +102,7 @@ class ProbabilityPath(AbstractBatchableObject):
 
     # --- Marginal distribution quantities (from Y1ToMarginalMean) ---
     phi_tgt0 = components.linear_sde.get_transition_distribution(components.t0, t)
+    self.fwd = phi_tgt0.update_and_marginalize_out_x(components.x_t0_prior).to_std()
 
     # We want to compute the "bridge path" marginal:
     # p_t(x_t; y_1) = \int p(x_t | x_0, y_1) p(x_0) dx_0
@@ -129,9 +138,118 @@ class ProbabilityPath(AbstractBatchableObject):
   def batch_size(self):
     return self.functional_beta_t.batch_size
 
-  def sample_functional_xt(self, key: PRNGKeyArray) -> LinearFunctional:
+  def sample(self, key: PRNGKeyArray) -> LinearFunctional:
+    """
+    Samples a functional from p(x_t | y_1)
+    """
+    return self.functional_pt_given_y1.sample(key)
 
-    return self.functional_pt_given_y1._sample(key)
+  def _sample(self, epsilon: Float[Array, 'D']) -> LinearFunctional:
+    """
+    Samples a functional from p(x_t | y_1) using the reparameterization trick.
+    """
+    return self.functional_pt_given_y1._sample(epsilon)
+
+  def normalizing_constant(self) -> Scalar:
+    return self.functional_pt_given_y1()
+
+  def log_prob(self, x: PyTree) -> Scalar:
+    return self.functional_pt_given_y1.log_prob(x)
+
+  @classmethod
+  def total_certainty_like(cls, x: Float[Array, 'D'], other: 'AbstractGaussianPotential') -> 'AbstractGaussianPotential':
+    return cls.functional_pt_given_y1.total_certainty_like(x, other)
+
+  @classmethod
+  def total_uncertainty_like(cls, other: 'AbstractGaussianPotential') -> 'AbstractGaussianPotential':
+    return cls.functional_pt_given_y1.total_uncertainty_like(other)
+
+  def sufficient_statistics(self, x: Float[Array, 'B D']) -> 'AbstractGaussianPotential':
+    return self.functional_pt_given_y1.sufficient_statistics(x)
+
+  @auto_vmap
+  def integrate(self):
+    r"""Compute the value of \int exp{-0.5*x^T J x + x^T h - logZ} dx"""
+    return self.normalizing_constant() - self.logZ
+
+  def score(self, x: Float[Array, 'D']) -> Float[Array, 'D']:
+    return self.functional_pt_given_y1.score(x)
+
+  def get_noise(self, x: Float[Array, 'D']) -> Float[Array, 'D']:
+    return self.functional_pt_given_y1.get_noise(x)
+
+  def __call__(self, x: PyTree) -> Scalar:
+    return self.functional_pt_given_y1(x)
+
+  def to_transition(self, epsilon: Float[Array, 'D']) -> GaussianTransition:
+    """
+    Converts the probability path to a transition distribution using the reparameterization trick.
+    """
+    x_given_y: LinearFunctional = self.functional_pt_given_y1._sample(epsilon)
+    return GaussianTransition(x_given_y.A, x_given_y.b, self.functional_pt_given_y1.Sigma, self.functional_pt_given_y1.logZ)
+
+  def _sample_matching_items(self, epsilon: Float[Array, 'D']) -> FlowItems:
+    """
+    Samples the matching items from p(x_t | y_1) using the reparameterization trick.
+
+    Args:
+      epsilon: Standard normal noise used for reparameterizing the stochastic bridge state.
+
+    Returns:
+      FlowItems: A container for the functional probabilistic quantities at time t:
+        t: The current time.
+        xt: The state of the stochastic process sampled from the marginal distribution
+          p_t(x_t | y_1) as a mapping from terminal evidence y_1.
+        flow: The velocity field of the probability flow ODE v_t(x_t), which
+          preserves the marginal distributions of the stochastic bridge.
+        score: The score function of the marginal distribution ∇ log p_t(x_t | y_1).
+        noise: The standard normal noise ε used for reparameterization.
+        drift: The drift of the Markovian projection SDE b_t(x_t) that preserves
+          the marginals of the stochastic bridge.
+    """
+    # 1. State xt as a LinearFunctional (mapping from y1 to xt)
+    xt = self.functional_pt_given_y1._sample(epsilon)
+
+    # 2. Extract SDE parameters
+    F, u, L = self.components.linear_sde.get_params(self.t)
+    LLT = L @ L.T
+
+    # 3. Compute quantities as LinearFunctionals
+    score = self.functional_pt_given_y1.score(xt)
+    # noise is just the constant epsilon
+    noise = LinearFunctional(DiagonalMatrix.zeros(self.components.linear_sde.dim), epsilon)
+
+    bwd_score = self.functional_beta_t.score(xt)
+
+    vt = F @ xt + u
+    drift = vt + LLT @ bwd_score
+    flow = drift - 0.5 * LLT @ score
+
+    return FlowItems(
+      t=self.t,
+      xt=xt,
+      flow=flow,
+      score=score,
+      noise=noise,
+      drift=drift
+    )
+
+def get_probability_path(
+  components: DiffusionModelComponents,
+  times: Float[Array, "T"],
+) -> ProbabilityPathSlice:
+  """
+  Computes the probability path at a set of times for a given diffusion model.
+
+  Args:
+    components: The fundamental components of the diffusion model.
+    times: A set of times at which to compute the probability path slices.
+
+  Returns:
+    ProbabilityPathSlice: A batched object containing the probabilistic quantities
+      at each time in the input array.
+  """
+  return jax.vmap(lambda t: ProbabilityPathSlice(components, t))(times)
 
 class Y1ToBwdMean(LinearFunctional):
   """
@@ -146,10 +264,10 @@ class Y1ToBwdMean(LinearFunctional):
     self,
     components: DiffusionModelComponents,
     t: Scalar,
-    _quantities: Optional[ProbabilityPath] = None,
+    _quantities: Optional[ProbabilityPathSlice] = None,
   ):
     if _quantities is None:
-      _quantities = ProbabilityPath(components, t)
+      _quantities = ProbabilityPathSlice(components, t)
 
     self.A = _quantities.functional_beta_t.mu.A
     self.b = _quantities.functional_beta_t.mu.b
@@ -168,10 +286,10 @@ class Y1ToMarginalMean(LinearFunctional):
     self,
     components: DiffusionModelComponents,
     t: Scalar,
-    _quantities: Optional[ProbabilityPath] = None,
+    _quantities: Optional[ProbabilityPathSlice] = None,
   ):
     if _quantities is None:
-      _quantities = ProbabilityPath(components, t)
+      _quantities = ProbabilityPathSlice(components, t)
 
     self.A = _quantities.y1_to_marginal_mean.A
     self.b = _quantities.y1_to_marginal_mean.b
@@ -191,10 +309,10 @@ class BwdMeanToMarginalMean(LinearFunctional):
     self,
     components: DiffusionModelComponents,
     t: Scalar,
-    _quantities: Optional[ProbabilityPath] = None,
+    _quantities: Optional[ProbabilityPathSlice] = None,
   ):
     if _quantities is None:
-      _quantities = ProbabilityPath(components, t)
+      _quantities = ProbabilityPathSlice(components, t)
 
     y1_to_marginal_mean = Y1ToMarginalMean(components, t, _quantities=_quantities)
     y1_to_bwd_mean = Y1ToBwdMean(components, t, _quantities=_quantities)
@@ -215,12 +333,12 @@ class DiffusionModelConversions(AbstractBatchableObject):
   transformations are derived from the Gaussian structure of the linear SDE and
   the initial prior.
   """
-  quantities: ProbabilityPath
+  quantities: ProbabilityPathSlice
   components: DiffusionModelComponents
   t: Scalar
 
   def __init__(self, components: DiffusionModelComponents, t: Scalar):
-    self.quantities = ProbabilityPath(components, t)
+    self.quantities = ProbabilityPathSlice(components, t)
     self.components = components
     self.t = t
 
@@ -433,7 +551,7 @@ class DiffusionModelConversions(AbstractBatchableObject):
     at the current state. This requires inverting the relationship between the
     flow, drift and score while accounting for the Gaussian prior on the
     initial state. The calculation utilizes the precomputed precision matrices
-    and affine mappings from the ProbabilityPath.
+    and affine mappings from the ProbabilityPathSlice.
     """
     F, u, L = self.components.linear_sde.get_params(self.t)
     LLT = L @ L.T

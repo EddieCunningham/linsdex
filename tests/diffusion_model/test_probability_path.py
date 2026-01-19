@@ -3,10 +3,15 @@ import jax
 jax.config.update('jax_enable_x64', True)
 import jax.numpy as jnp
 from jax import random
-from linsdex.diffusion_model.probability_path import DiffusionModelComponents, ProbabilityPath, probability_path_transition
+from linsdex.diffusion_model.probability_path import (
+    DiffusionModelComponents,
+    ProbabilityPathSlice,
+    probability_path_transition,
+    get_probability_path
+)
 from linsdex.diffusion_model.probability_path import DiffusionModelConversions, Y1ToBwdMean, Y1ToMarginalMean
 from linsdex import OrnsteinUhlenbeck, empirical_dist, w2_distance, LinearTimeInvariantSDE
-from linsdex.sde.conditioned_linear_sde import ConditionedLinearSDE
+from linsdex.sde.conditioned_linear_sde import ConditionedLinearSDE, FlowItems
 from linsdex.potential.gaussian.dist import StandardGaussian, MixedGaussian
 from linsdex.potential.gaussian.transition import GaussianTransition
 from linsdex.matrix.diagonal import DiagonalMatrix
@@ -155,10 +160,10 @@ class TestDiffusionHubConversions:
         assert jnp.allclose(marginal.Sigma.as_matrix(), marginal_recon.Sigma.as_matrix(), atol=1e-5)
 
     def test_diffusion_path_quantities_properties(self, components_fixture, request, key):
-        """Test the properties of ProbabilityPath."""
+        """Test the properties of ProbabilityPathSlice."""
         diffusion_components = request.getfixturevalue(components_fixture)
         t = 0.5
-        quantities = ProbabilityPath(diffusion_components, t)
+        quantities = ProbabilityPathSlice(diffusion_components, t)
 
         # Test beta_precision property
         assert jtu.tree_all(jtu.tree_map(jnp.allclose, quantities.beta_precision.as_matrix(), quantities.functional_beta_t.J.as_matrix()))
@@ -239,6 +244,38 @@ class TestDiffusionHubConversions:
 
         assert jnp.allclose(y1, y1_recon, atol=1e-5)
 
+    def test_to_transition(self, components_fixture, request, key):
+        """Test ProbabilityPathSlice.to_transition method."""
+        diffusion_components = request.getfixturevalue(components_fixture)
+        k1, k2 = random.split(key)
+        dim = diffusion_components.linear_sde.dim
+        t = 0.5
+        quantities = ProbabilityPathSlice(diffusion_components, t)
+
+        epsilon = random.normal(k1, (dim,))
+        transition = quantities.to_transition(epsilon)
+
+        assert isinstance(transition, GaussianTransition)
+
+        # Test consistency with _sample
+        y1 = random.normal(k2, (dim,))
+        x_given_y_lf = quantities._sample(epsilon)
+        xt_expected = x_given_y_lf(y1)
+
+        # GaussianTransition(A, b, Sigma, logZ) where mu = A@y + b
+        xt_actual = transition.condition_on_x(y1).mu
+        assert jnp.allclose(xt_actual, xt_expected, atol=1e-5)
+
+        # Test covariance and logZ
+        assert jtu.tree_all(jtu.tree_map(jnp.allclose, transition.Sigma.as_matrix(), quantities.functional_pt_given_y1.Sigma.as_matrix()))
+
+        def compare_logZ(z1, z2):
+            if isinstance(z1, jnp.ndarray) or jnp.isscalar(z1):
+                return jnp.allclose(z1, z2)
+            return jtu.tree_all(jtu.tree_map(jnp.allclose, z1, z2))
+
+        assert compare_logZ(transition.logZ, quantities.functional_pt_given_y1.logZ)
+
     def test_score_flow_conversion(self, components_fixture, request, key):
         """Test score <-> flow conversion."""
         diffusion_components = request.getfixturevalue(components_fixture)
@@ -253,6 +290,76 @@ class TestDiffusionHubConversions:
         score_recon = conversions.flow_to_score(xt, flow)
 
         assert jnp.allclose(score, score_recon, atol=1e-5)
+
+    def test_sample_matching_items(self, components_fixture, request, key):
+        """Test _sample_matching_items results match ConditionedLinearSDE and internal consistency."""
+        components = request.getfixturevalue(components_fixture)
+        dim = components.linear_sde.dim
+        t = 0.5
+
+        k1, k2, k3 = random.split(key, 3)
+        y1 = random.normal(k1, (dim,))
+        epsilon = random.normal(k2, (dim,))
+
+        # 1. Functional matching items from ProbabilityPathSlice
+        quantities = ProbabilityPathSlice(components, t)
+        functional_items = quantities._sample_matching_items(epsilon)
+
+
+        jac = eqx.filter_jacfwd(lambda e: eqx.filter(quantities._sample_matching_items(e), eqx.is_inexact_array))(epsilon)
+
+        dflow_deps: Float[Array, 'D D']  = jac.flow.b  # jac.flow.A  = 0
+        ddrift_deps: Float[Array, 'D D'] = jac.drift.b # jac.drift.A = 0
+        dscore_deps: Float[Array, 'D D'] = jac.score.b # jac.score.A = 0
+
+        flow_cov = dflow_deps @ dflow_deps.T
+        drift_cov = ddrift_deps @ ddrift_deps.T
+        score_cov = dscore_deps @ dscore_deps.T
+
+        import pdb; pdb.set_trace()
+
+        # Resolve with y1
+        resolved_items = resolve_functional(functional_items, y1)
+
+        # 2. Reference values
+        t0, t1 = components.t0, components.t1
+        phi0 = components.x_t0_prior
+        phi1 = StandardGaussian(y1, components.evidence_cov)
+
+        # To get the right drift and flow messages, we need a cond_sde where
+        # fwd message at t is p_t(x_t) and bwd message at t is p(y1 | x_t).
+        # This is achieved by putting the prior at t0 and evidence at t1.
+        evidence = GaussianPotentialSeries(jnp.array([t0, t1]),
+                                          jtu.tree_map(lambda *xs: jnp.stack(xs), phi0, phi1))
+        cond_sde = components.linear_sde.condition_on(evidence)
+
+        # ProbabilityPathSlice computes the bridge path marginal:
+        # p_bridge(x_t) = \int p(x_t | x_0, y1) p(x_0) dx_0.
+        # This is what quantities.functional_pt_given_y1 represents functionally.
+        pxt_bridge = resolve_functional(quantities.functional_pt_given_y1, y1)
+        xt_resolved = resolved_items.xt
+
+        # Check xt matches bridge path sample
+        assert jnp.allclose(xt_resolved, pxt_bridge._sample(epsilon), atol=1e-5)
+
+        # Check flow and drift match expectations.
+        # drift only depends on the backward message, which is correctly set up in cond_sde.
+        assert jnp.allclose(resolved_items.drift, cond_sde.get_drift(t, xt_resolved), atol=1e-5)
+
+        # However, cond_sde.get_flow(t, xt_resolved) computes the flow for the conditioned marginal p(x_t|y1),
+        # whereas resolved_items.flow is for the bridge path marginal.
+        # So they won't match. Instead, we check the consistency relation:
+        # flow = drift - 0.5 * LLT @ score
+        F, u, L = components.linear_sde.get_params(t)
+        LLT = L @ L.T
+        expected_flow = resolved_items.drift - 0.5 * (LLT @ resolved_items.score)
+        assert jnp.allclose(resolved_items.flow, expected_flow, atol=1e-5)
+
+        # Score should match the bridge path marginal score
+        assert jnp.allclose(resolved_items.score, pxt_bridge.score(xt_resolved), atol=1e-5)
+
+        # Check noise is preserved
+        assert jnp.allclose(resolved_items.noise, epsilon, atol=1e-5)
 
     def test_epsilon_bwd_message_conversion(self, components_fixture, request, key):
         """Test epsilon <-> backward message conversion."""
@@ -479,17 +586,17 @@ def test_transition_precomputation(key):
     evidence_cov=evidence_cov
   )
 
-  ProbabilityPath(components, t0)
+  ProbabilityPathSlice(components, t0)
 
   n_times = 4
   times = jnp.linspace(t0, t1, n_times)
 
   # Get the quantities at each time step so that we can get p(x_t | y_1)
-  def get_quantities(t) -> ProbabilityPath:
-    return ProbabilityPath(components, t)
+  def get_quantities(t) -> ProbabilityPathSlice:
+    return ProbabilityPathSlice(components, t)
 
-  functional_quantities: ProbabilityPath = eqx.filter_vmap(get_quantities)(times)
-  functional_pts_given_y1: StandardGaussian = functional_quantities.functional_pt_given_y1
+  probability_paths: ProbabilityPathSlice = eqx.filter_vmap(get_quantities)(times)
+  functional_pts_given_y1: StandardGaussian = probability_paths.functional_pt_given_y1
 
   from linsdex.potential.gaussian.transition import functional_potential_to_transition
   transitions: GaussianTransition = eqx.filter_vmap(functional_potential_to_transition)(functional_pts_given_y1)
@@ -539,7 +646,7 @@ def test_auto_vmap_unbatched_args(key):
 
 def test_diffusion_marginal_at_t0_matches_prior(key):
   """Verify that the marginal distribution at t=t0 matches the prior.
-  This would have caught the numerical instability and logical error in ProbabilityPath."""
+  This would have caught the numerical instability and logical error in ProbabilityPathSlice."""
   dim = 2
   t0, t1 = 0.0, 1.0
   sde = OrnsteinUhlenbeck(dim=dim, sigma=1.0, lambda_=1.0)
@@ -555,7 +662,7 @@ def test_diffusion_marginal_at_t0_matches_prior(key):
   )
 
   # Get quantities exactly at t=t0
-  quantities = ProbabilityPath(components, t0)
+  quantities = ProbabilityPathSlice(components, t0)
   p_xt0_given_y1_functional = quantities.functional_pt_given_y1
 
   # Resolve the functional with an arbitrary y1
@@ -563,7 +670,7 @@ def test_diffusion_marginal_at_t0_matches_prior(key):
   p_xt0_given_y1 = resolve_functional(p_xt0_given_y1_functional, y1)
 
   # At t=t0, if we haven't incorporated any y1 yet, it should exactly match the prior
-  # Note: ProbabilityPath incorporates y1 via the bridge formula.
+  # Note: ProbabilityPathSlice incorporates y1 via the bridge formula.
   # If we want to check that it matches the prior at t=0, we need to ensure the formula is stable.
   dist = w2_distance(p_xt0_given_y1, prior)
   assert dist < 1e-10
@@ -666,3 +773,48 @@ class TestDiffusionFunctionalConversions:
 
         # flow_to_score
         check_conversion(lambda f, x: conversions.flow_to_score(x, f), drift_func, xt_func(x_val))
+
+def test_get_probability_path(diffusion_components):
+    """Test get_probability_path returns a correctly batched ProbabilityPathSlice."""
+    t0, t1 = diffusion_components.t0, diffusion_components.t1
+    n_times = 5
+    times = jnp.linspace(t0, t1, n_times)
+
+    path = get_probability_path(diffusion_components, times)
+
+    # Check batch size
+    assert path.batch_size == n_times
+
+    # Check that individual slices match
+    for i in range(n_times):
+        t = times[i]
+        expected_slice = ProbabilityPathSlice(diffusion_components, t)
+
+        # We can compare some quantities from the slice
+        actual_slice = path[i]
+
+        # Compare backward message precision
+        assert jnp.allclose(
+            actual_slice.functional_beta_t.J.as_matrix(),
+            expected_slice.functional_beta_t.J.as_matrix(),
+            atol=1e-5
+        )
+
+        # Compare marginal precision
+        assert jnp.allclose(
+            actual_slice.marginal_precision.as_matrix(),
+            expected_slice.marginal_precision.as_matrix(),
+            atol=1e-5
+        )
+
+        # Compare marginal mean functional
+        assert jnp.allclose(
+            actual_slice.functional_pt_given_y1.mu.A.as_matrix(),
+            expected_slice.functional_pt_given_y1.mu.A.as_matrix(),
+            atol=1e-5
+        )
+        assert jnp.allclose(
+            actual_slice.functional_pt_given_y1.mu.b,
+            expected_slice.functional_pt_given_y1.mu.b,
+            atol=1e-5
+        )
