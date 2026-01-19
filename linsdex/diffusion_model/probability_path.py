@@ -29,6 +29,7 @@ while sampling or performing inference in another.
 """
 import jax
 import jax.numpy as jnp
+import equinox as eqx
 from typing import Optional, Callable, Dict
 from jaxtyping import Array, Float, Scalar, PRNGKeyArray, PyTree
 from linsdex.series.batchable_object import AbstractBatchableObject, auto_vmap
@@ -42,6 +43,7 @@ from linsdex.linear_functional.functional_ops import resolve_functional
 from linsdex.potential.gaussian.dist import AbstractGaussianPotential
 
 from linsdex.sde.conditioned_linear_sde import FlowItems
+from linsdex.util.parallel_scan import parallel_scan, _tree_concatenate
 
 class DiffusionModelComponents(AbstractBatchableObject):
   """
@@ -88,7 +90,13 @@ class ProbabilityPathSlice(AbstractGaussianPotential):
   t: Scalar
   fwd: StandardGaussian
 
-  def __init__(self, components: DiffusionModelComponents, t: Scalar):
+  def __init__(
+    self,
+    components: DiffusionModelComponents,
+    t: Scalar,
+    phi_t1gt: Optional[GaussianTransition] = None,
+    phi_tgt0: Optional[GaussianTransition] = None
+  ):
     self.components = components
     self.t = t
     evidence_precision = components.evidence_cov.get_inverse()
@@ -97,11 +105,13 @@ class ProbabilityPathSlice(AbstractGaussianPotential):
 
     # --- Backward message quantities (from Y1ToBwdMean) ---
     functional_phi_t1 = MixedGaussian(no_op_lf, evidence_precision)
-    phi_t1gt = components.linear_sde.get_transition_distribution(t, components.t1)
+    if phi_t1gt is None:
+      phi_t1gt = components.linear_sde.get_transition_distribution(t, components.t1)
     self.functional_beta_t = phi_t1gt.update_and_marginalize_out_y(functional_phi_t1)
 
     # --- Marginal distribution quantities (from Y1ToMarginalMean) ---
-    phi_tgt0 = components.linear_sde.get_transition_distribution(components.t0, t)
+    if phi_tgt0 is None:
+      phi_tgt0 = components.linear_sde.get_transition_distribution(components.t0, t)
     self.fwd = phi_tgt0.update_and_marginalize_out_x(components.x_t0_prior).to_std()
 
     # We want to compute the "bridge path" marginal:
@@ -249,7 +259,27 @@ def get_probability_path(
     ProbabilityPathSlice: A batched object containing the probabilistic quantities
       at each time in the input array.
   """
-  return jax.vmap(lambda t: ProbabilityPathSlice(components, t))(times)
+
+  def get_transition(t_start, t_end):
+    return components.linear_sde.get_transition_distribution(t_start, t_end)
+
+  transitions = jax.vmap(get_transition)(times[:-1], times[1:])
+
+  def op(left, right):
+    return left.chain(right)
+
+  phi_tgt0_scan = parallel_scan(op, transitions, reverse=False)
+  phi_t1gt_scan = parallel_scan(op, transitions, reverse=True)
+
+  # Prepend identity to phi_tgt0 and append to phi_t1gt
+  # This ensures both have length T matching the times array
+  identity = GaussianTransition.no_op_like(transitions[0])
+  identity = jax.tree_util.tree_map(lambda x: x[None] if eqx.is_array(x) else x, identity)
+
+  phi_tgt0 = _tree_concatenate(identity, phi_tgt0_scan, axis=0)
+  phi_t1gt = _tree_concatenate(phi_t1gt_scan, identity, axis=0)
+
+  return jax.vmap(lambda t, p1, p0: ProbabilityPathSlice(components, t, phi_t1gt=p1, phi_tgt0=p0))(times, phi_t1gt, phi_tgt0)
 
 class Y1ToBwdMean(LinearFunctional):
   """

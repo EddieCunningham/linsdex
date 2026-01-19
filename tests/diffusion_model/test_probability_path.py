@@ -316,8 +316,6 @@ class TestDiffusionHubConversions:
         drift_cov = ddrift_deps @ ddrift_deps.T
         score_cov = dscore_deps @ dscore_deps.T
 
-        import pdb; pdb.set_trace()
-
         # Resolve with y1
         resolved_items = resolve_functional(functional_items, y1)
 
@@ -818,3 +816,31 @@ def test_get_probability_path(diffusion_components):
             expected_slice.functional_pt_given_y1.mu.b,
             atol=1e-5
         )
+
+def test_get_probability_path_scan_equivalence(diffusion_components):
+    """Targeted test to verify that the parallel_scan implementation of
+    get_probability_path matches the direct vmap implementation."""
+    t0, t1 = diffusion_components.t0, diffusion_components.t1
+    n_times = 10
+    times = jnp.linspace(t0, t1, n_times)
+
+    # Implementation 1: The current optimized one (using parallel_scan)
+    path_scan = get_probability_path(diffusion_components, times)
+
+    # Implementation 2: The direct vmap one (ground truth)
+    def get_slice_direct(t):
+        return ProbabilityPathSlice(diffusion_components, t)
+    path_direct = jax.vmap(get_slice_direct)(times)
+
+    # Compare all array leaves in the PyTree
+    params_scan, _ = eqx.partition(path_scan, eqx.is_array)
+    params_direct, _ = eqx.partition(path_direct, eqx.is_array)
+
+    # Check that the structures are the same
+    assert jtu.tree_structure(params_scan) == jtu.tree_structure(params_direct)
+
+    # Compare leaves
+    def compare_leaves(x, y):
+        assert jnp.allclose(x, y, atol=1e-5)
+
+    jtu.tree_map(compare_leaves, params_scan, params_direct)
