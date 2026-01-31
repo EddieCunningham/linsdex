@@ -42,7 +42,7 @@ def get_integrated_marginal_given_y1(
   evidence_cov: AbstractSquareMatrix,
   t: Scalar
 ) -> StandardGaussian:
-  """
+  r"""
   Computes p(x_t | y_1) = \int p(x_t | x_0, y_1) p(x_0) dx_0
 
   Args:

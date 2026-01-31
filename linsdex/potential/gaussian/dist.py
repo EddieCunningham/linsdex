@@ -76,7 +76,7 @@ class AbstractGaussianPotential(AbstractPotential):
 
   @auto_vmap
   def integrate(self):
-    """Compute the value of \int exp{-0.5*x^T J x + x^T h - logZ} dx"""
+    r"""Compute the value of \int exp{-0.5*x^T J x + x^T h - logZ} dx"""
     return self.normalizing_constant() - self.logZ
 
   @abc.abstractmethod
@@ -527,7 +527,7 @@ class NaturalJointGaussian(NaturalGaussian):
 
   @auto_vmap
   def chain(self, other: 'AbstractPotential') -> 'AbstractPotential':
-    """Combine two transitions into a single transition.
+    r"""Combine two transitions into a single transition.
 
     If self is p(x|y) and other is p(y|z) then this returns p(x|z) = \int p(x|y)p(y|z) dy
 
@@ -769,7 +769,7 @@ class StandardGaussian(AbstractGaussianPotential):
 
   @auto_vmap
   def normalizing_constant(self):
-    """Compute the normalizing constant, which is
+    r"""Compute the normalizing constant, which is
     \int exp{-0.5*x^T Sigma^{-1} x + x^T Sigma^{-1}mu} dx. This is different
     than logZ which can be an arbitrary scalar."""
     covinv_mu = self.Sigma.solve(self.mu)
@@ -1027,7 +1027,7 @@ class MixedGaussian(AbstractGaussianPotential):
 
   @auto_vmap
   def normalizing_constant(self):
-    """Compute the normalizing constant, which is
+    r"""Compute the normalizing constant, which is
     \int exp{-0.5*x^T Sigma^{-1} x + x^T Sigma^{-1}mu} dx. This is different
     than logZ which can be an arbitrary scalar."""
     Jmu = self.J@self.mu

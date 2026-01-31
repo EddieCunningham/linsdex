@@ -19,7 +19,7 @@ def make_emission_potential(H: Float[Array, 'Dy Dx'],
                             R: Union[Float[Array, 'Dy Dy'], Float[Array, 'Dy']],
                             y: Float[Array, 'Dy'],
                             mask: Optional[Bool[Array, 'Dy']] = None) -> MixedGaussian:
-  """Make a node potential that corresponds to the emission distribution
+  r"""Make a node potential that corresponds to the emission distribution
   \phi(x) \propto N(y|Hx + v, R)
 
   **Arguments**

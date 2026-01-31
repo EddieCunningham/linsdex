@@ -43,7 +43,6 @@ from linsdex.linear_functional.functional_ops import resolve_functional
 from linsdex.potential.gaussian.dist import AbstractGaussianPotential
 
 from linsdex.sde.conditioned_linear_sde import FlowItems
-from linsdex.util.parallel_scan import parallel_scan, _tree_concatenate
 
 class DiffusionModelComponents(AbstractBatchableObject):
   """
@@ -251,35 +250,31 @@ def get_probability_path(
   """
   Computes the probability path at a set of times for a given diffusion model.
 
+  This function efficiently computes probability path slices for multiple times
+  by solving only two ODEs total rather than 2n ODEs for n times.
+
   Args:
     components: The fundamental components of the diffusion model.
     times: A set of times at which to compute the probability path slices.
+           Must be sorted in ascending order.
 
   Returns:
     ProbabilityPathSlice: A batched object containing the probabilistic quantities
       at each time in the input array.
   """
+  t0, t1 = components.t0, components.t1
 
-  def get_transition(t_start, t_end):
-    return components.linear_sde.get_transition_distribution(t_start, t_end)
+  # One backward ODE solve for all phi_t1gt (transitions from each t to t1)
+  phi_t1gt = components.linear_sde.get_transition_distribution(times, t1)
 
-  transitions = jax.vmap(get_transition)(times[:-1], times[1:])
+  # One forward ODE solve for all phi_tgt0 (transitions from t0 to each t)
+  phi_tgt0 = components.linear_sde.get_forward_transition_distribution(t0, times)
 
-  def op(left, right):
-    return left.chain(right)
-
-  phi_tgt0_scan = parallel_scan(op, transitions, reverse=False)
-  phi_t1gt_scan = parallel_scan(op, transitions, reverse=True)
-
-  # Prepend identity to phi_tgt0 and append to phi_t1gt
-  # This ensures both have length T matching the times array
-  identity = GaussianTransition.no_op_like(transitions[0])
-  identity = jax.tree_util.tree_map(lambda x: x[None] if eqx.is_array(x) else x, identity)
-
-  phi_tgt0 = _tree_concatenate(identity, phi_tgt0_scan, axis=0)
-  phi_t1gt = _tree_concatenate(phi_t1gt_scan, identity, axis=0)
-
-  return jax.vmap(lambda t, p1, p0: ProbabilityPathSlice(components, t, phi_t1gt=p1, phi_tgt0=p0))(times, phi_t1gt, phi_tgt0)
+  # Construct ProbabilityPathSlice with precomputed transitions
+  ppaths = jax.vmap(
+    lambda t, p1, p0: ProbabilityPathSlice(components, t, phi_t1gt=p1, phi_tgt0=p0)
+  )(times, phi_t1gt, phi_tgt0)
+  return ppaths
 
 class Y1ToBwdMean(LinearFunctional):
   """
@@ -660,9 +655,7 @@ def noise_schedule_drift_correction(
   marginal distributions are preserved. The transformation is given by the
   expression
   $b_t'(x_t) = b_t(x_t) + 0.5(L_t' L_t'^\top - L_t L_t^\top) \nabla \log p_t(x_t)$
-  where $L_t'$ is the new diffusion coefficient. This ensures that infinitely
-  many different stochastic processes can share the same marginal distributions
-  as established in the theoretical framework.
+  where $L_t'$ is the new diffusion coefficient.
   """
   if noise_schedule is None:
     return drift

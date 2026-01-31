@@ -5,4 +5,5 @@ from linsdex.sde import *
 from linsdex.series import *
 # from linsdex.ssm import *
 from linsdex.util import *
+from linsdex import nn
 

@@ -237,6 +237,150 @@ class TestLinearSDETransitions:
       assert jnp.allclose(batched_elt.Sigma.as_matrix(), individual_transition.Sigma.as_matrix(), atol=1e-5)
 
 
+class TestForwardTransitionDistribution:
+  """Test the forward transition distribution computation"""
+
+  def test_forward_matches_backward_brownian(self):
+    """Test that forward and backward ODE give same result for Brownian motion"""
+    sigma = 1.0
+    dim = 2
+    sde = BrownianMotion(sigma=sigma, dim=dim)
+
+    s, t = 0.0, 1.0
+    backward_transition = sde.get_transition_distribution(s, t)
+    forward_transition = sde.get_forward_transition_distribution(s, t)
+
+    assert jnp.allclose(forward_transition.A.as_matrix(), backward_transition.A.as_matrix(), atol=1e-5)
+    assert jnp.allclose(forward_transition.u, backward_transition.u, atol=1e-5)
+    assert jnp.allclose(forward_transition.Sigma.as_matrix(), backward_transition.Sigma.as_matrix(), atol=1e-5)
+
+  def test_forward_matches_backward_ornstein_uhlenbeck(self):
+    """Test that forward and backward ODE give same result for Ornstein-Uhlenbeck"""
+    sigma = 1.0
+    lambda_ = 0.5
+    dim = 2
+    sde = OrnsteinUhlenbeck(sigma=sigma, lambda_=lambda_, dim=dim)
+
+    s, t = 0.0, 1.0
+    backward_transition = sde.get_transition_distribution(s, t)
+    forward_transition = sde.get_forward_transition_distribution(s, t)
+
+    assert jnp.allclose(forward_transition.A.as_matrix(), backward_transition.A.as_matrix(), atol=1e-5)
+    assert jnp.allclose(forward_transition.u, backward_transition.u, atol=1e-5)
+    assert jnp.allclose(forward_transition.Sigma.as_matrix(), backward_transition.Sigma.as_matrix(), atol=1e-5)
+
+  def test_forward_transition_multiple_end_times(self):
+    """Test get_forward_transition_distribution with multiple end times"""
+    sigma = 1.0
+    dim = 2
+    sde = BrownianMotion(sigma=sigma, dim=dim)
+
+    s = 0.0
+    t = jnp.array([0.25, 0.5, 0.75, 1.0])
+
+    batched_transition = sde.get_forward_transition_distribution(s, t)
+    assert batched_transition.batch_size == len(t)
+
+    # Verify each element matches individual scalar call
+    for i, ti in enumerate(t):
+      individual_transition = sde.get_forward_transition_distribution(s, ti)
+      batched_elt = batched_transition[i]
+
+      assert jnp.allclose(batched_elt.A.as_matrix(), individual_transition.A.as_matrix(), atol=1e-5)
+      assert jnp.allclose(batched_elt.u, individual_transition.u, atol=1e-5)
+      assert jnp.allclose(batched_elt.Sigma.as_matrix(), individual_transition.Sigma.as_matrix(), atol=1e-5)
+
+  def test_forward_transition_time_varying_sde(self):
+    """Test forward transition with a time-varying SDE"""
+    class TimeVaryingSDE(AbstractLinearSDE):
+      _dim: int
+      def __init__(self, dim=2):
+        self._dim = dim
+      @property
+      def dim(self):
+        return self._dim
+      @property
+      def batch_size(self):
+        return None
+      def get_params(self, t):
+        F = DiagonalMatrix(-t * jnp.ones(self.dim))
+        u = jnp.ones(self.dim) * t
+        L = DiagonalMatrix(jnp.ones(self.dim) * (1.0 + t))
+        return F, u, L
+
+    dim = 2
+    sde = TimeVaryingSDE(dim=dim)
+    s = 0.1
+    t = jnp.array([0.3, 0.5, 0.8, 1.0])
+
+    batched_transition = sde.get_forward_transition_distribution(s, t)
+    assert batched_transition.batch_size == len(t)
+
+    # Verify each element matches individual scalar call
+    for i, ti in enumerate(t):
+      individual_transition = sde.get_forward_transition_distribution(s, ti)
+      batched_elt = batched_transition[i]
+
+      assert jnp.allclose(batched_elt.A.as_matrix(), individual_transition.A.as_matrix(), atol=1e-5)
+      assert jnp.allclose(batched_elt.u, individual_transition.u, atol=1e-5)
+      assert jnp.allclose(batched_elt.Sigma.as_matrix(), individual_transition.Sigma.as_matrix(), atol=1e-5)
+
+  def test_forward_backward_consistency_time_varying(self):
+    """Test that forward and backward ODE give same result for time-varying SDE"""
+    class TimeVaryingSDE(AbstractLinearSDE):
+      _dim: int
+      def __init__(self, dim=2):
+        self._dim = dim
+      @property
+      def dim(self):
+        return self._dim
+      @property
+      def batch_size(self):
+        return None
+      def get_params(self, t):
+        F = DiagonalMatrix(-t * jnp.ones(self.dim))
+        u = jnp.ones(self.dim) * t
+        L = DiagonalMatrix(jnp.ones(self.dim) * (1.0 + t))
+        return F, u, L
+
+    dim = 2
+    sde = TimeVaryingSDE(dim=dim)
+
+    # Test several time pairs
+    test_cases = [(0.0, 0.5), (0.1, 0.8), (0.2, 1.0)]
+    for s, t in test_cases:
+      backward_transition = sde.get_transition_distribution(s, t)
+      forward_transition = sde.get_forward_transition_distribution(s, t)
+
+      assert jnp.allclose(forward_transition.A.as_matrix(), backward_transition.A.as_matrix(), atol=1e-5), \
+        f"A mismatch for s={s}, t={t}"
+      assert jnp.allclose(forward_transition.u, backward_transition.u, atol=1e-5), \
+        f"u mismatch for s={s}, t={t}"
+      assert jnp.allclose(forward_transition.Sigma.as_matrix(), backward_transition.Sigma.as_matrix(), atol=1e-5), \
+        f"Sigma mismatch for s={s}, t={t}"
+
+  def test_forward_multiple_end_times_matches_backward(self):
+    """Test that batched forward matches batched backward for corresponding times"""
+    sigma = 1.0
+    dim = 2
+    sde = BrownianMotion(sigma=sigma, dim=dim)
+
+    s = 0.0
+    t_array = jnp.array([0.25, 0.5, 0.75, 1.0])
+
+    # Forward: single start, multiple ends
+    forward_transitions = sde.get_forward_transition_distribution(s, t_array)
+
+    # Backward: multiple starts, single end (get each one individually for comparison)
+    for i, ti in enumerate(t_array):
+      backward_transition = sde.get_transition_distribution(s, ti)
+      forward_elt = forward_transitions[i]
+
+      assert jnp.allclose(forward_elt.A.as_matrix(), backward_transition.A.as_matrix(), atol=1e-5)
+      assert jnp.allclose(forward_elt.u, backward_transition.u, atol=1e-5)
+      assert jnp.allclose(forward_elt.Sigma.as_matrix(), backward_transition.Sigma.as_matrix(), atol=1e-5)
+
+
 class TestLinearSDEConditioning:
   """Test conditioning of linear SDEs on evidence"""
 

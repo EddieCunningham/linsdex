@@ -210,6 +210,114 @@ class AbstractLinearSDE(AbstractSDE, abc.ABC):
       Sigma = eqx.filter_vmap(finalize_sigma)(Sigma)
       return eqx.filter_vmap(GaussianTransition)(A, u, Sigma)
 
+  def get_forward_transition_distribution(
+    self,
+    s: Scalar,
+    t: Union[Scalar, Float[Array, 'N']],
+    ode_solver_params: Optional["ODESolverParams"] = None,
+  ) -> GaussianTransition:
+    """Get the transition parameters from time s to time t by solving the forward ODE.
+
+    This is the complement to get_transition_distribution. While that method supports
+    multiple start times s and a single end time t (by solving backward), this method
+    supports a single start time s and multiple end times t (by solving forward).
+
+    This solves for the transition parameters A_{t,s}, u_{t,s}, and Sigma_{t,s} so that
+    for a starting point x_s, the transition distribution p(x_t | x_s) is Gaussian
+    N(x_t | A_{t,s} x_s + u_{t,s}, Sigma_{t,s})
+
+    **Arguments**
+
+    - `s`: The start time (scalar)
+    - `t`: The end time(s). If this is an array, we assume it is sorted ascending
+           and all values are greater than s.
+
+    **Returns**
+
+    - `GaussianTransition`: The transition distribution(s). If t is an array,
+                            this will be a batched GaussianTransition object.
+    """
+    # Call get params to get the data types
+    t_is_scalar = jnp.ndim(t) == 0
+    F, u_drift, L = self.get_params(s)
+    I = (F.T@L).set_eye()
+
+    D = self.dim
+    A0 = I  # Initialize with identity matrix at time s
+    u0 = jnp.zeros(D)
+    Sigma0 = I.set_zero()  # Initialize with 0 matrix
+
+    # Remove the tags from the matrices so that we avoid symbolic computation
+    A0 = eqx.tree_at(lambda x: x.tags, A0, TAGS.no_tags)
+    Sigma0 = eqx.tree_at(lambda x: x.tags, Sigma0, TAGS.no_tags)
+
+    # Initialize the ODE state
+    y0 = (A0, u0, Sigma0)
+
+    # The ODE solver should not try to update the tags, so need to partition
+    y0_params, y0_static = eqx.partition(y0, eqx.is_inexact_array)
+
+    def forward_dynamics(tau, y_params):
+      y = eqx.combine(y_params, y0_static)
+      A, u_state, Sigma = y
+
+      F, u_drift, L = self.get_params(tau)
+      LLT = L@L.T
+
+      dA = F@A
+      du = F@u_state + u_drift
+      dSigma = F@Sigma + Sigma@F.T + LLT
+
+      dy = (dA, du, dSigma)
+      dy_params, _ = eqx.partition(dy, eqx.is_inexact_array)
+      return dy_params
+
+    # Solve the ODE forwards in time
+    from linsdex.sde.ode_sde_simulation import ode_solve
+    from linsdex.series.series import TimeSeries
+    if t_is_scalar:
+      save_times = jnp.array([s, t])
+    else:
+      # t is sorted ascending and all greater than s
+      save_times = jnp.concatenate([jnp.array([s]), t])
+
+    if ode_solver_params is None:
+      from linsdex.sde.ode_sde_simulation import ODESolverParams
+      ode_solver_params = ODESolverParams()
+
+    res = ode_solve(forward_dynamics, y0_params, save_times, params=ode_solver_params)
+    if isinstance(res, TimeSeries):
+      yT_params_raw = res.values
+    else:
+      yT_params_raw = res
+
+    # Extract all points except the first one (which is s)
+    yT_params = jtu.tree_map(lambda x: x[1:], yT_params_raw)
+
+    # Combine with static data
+    if t_is_scalar:
+      yT_params = jtu.tree_map(lambda x: x[0], yT_params)
+      yT = eqx.combine(yT_params, y0_static)
+    else:
+      batch_size_val = jtu.tree_leaves(yT_params)[0].shape[0]
+      def broadcast_static(x):
+        return jnp.broadcast_to(x, (batch_size_val,) + x.shape) if eqx.is_array(x) else x
+      y0_static_batched = jtu.tree_map(broadcast_static, y0_static)
+      yT = eqx.combine(yT_params, y0_static_batched)
+
+    A, u, Sigma = yT
+
+    # If all of Sigma has elements close to 0, symbolically set it to 0.
+    def finalize_sigma(S):
+      return util.where(jnp.abs(S.elements).max() < 1e-8, S.set_zero(), S)
+
+    if t_is_scalar:
+      Sigma = finalize_sigma(Sigma)
+      return GaussianTransition(A, u, Sigma)
+    else:
+      Sigma = eqx.filter_vmap(finalize_sigma)(Sigma)
+      return eqx.filter_vmap(GaussianTransition)(A, u, Sigma)
+
   def condition_on(self, evidence: GaussianPotentialSeries) -> "ConditionedLinearSDE":
     from linsdex.sde.conditioned_linear_sde import ConditionedLinearSDE
     return ConditionedLinearSDE(self, evidence)

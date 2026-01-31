@@ -336,7 +336,7 @@ def functional_potential_to_transition(potential: AbstractGaussianPotential) -> 
 def gaussian_chain_parallel_sample(transitions: GaussianTransition,
                                    x0: Float[Array, 'D'],
                                    keys: Float[Array, 'N-1 2']):
-  """Parallel algorithm for sampling from a chain of Gaussian transitions.
+  r"""Parallel algorithm for sampling from a chain of Gaussian transitions.
   See appendix H here https://arxiv.org/pdf/2208.04933.
 
   Recurrence is x_{k+1} = A_k x_k + u_k + \Sigma_k^{1/2} \epsilon_k
@@ -465,7 +465,7 @@ def gaussian_joint_e_step(joint: JointPotential) -> GaussianJointStatistics:
   return GaussianJointStatistics.from_block_stats(joint_ess)
 
 def gaussian_joint_m_step(statistics: GaussianJointStatistics) -> JointPotential:
-  """Returns the solution to argmin_{q(y|x)}E_{p(x,y)}[\log q(y|x)] given the statistics for p(x,y)
+  r"""Returns the solution to argmin_{q(y|x)}E_{p(x,y)}[\log q(y|x)] given the statistics for p(x,y)
   """
   dim = statistics.Ex.shape[-1]
   stats = statistics.to_block_stats()
