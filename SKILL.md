@@ -83,6 +83,9 @@ Condition Linear SDEs on observations for time series interpolation, Brownian br
 ### `/diffusion-conversions`
 Convert between diffusion model representations (y1, score, flow, drift) for training and sampling generative models. Use when building diffusion-based neural networks.
 
+### `/probability-paths`
+Work with probability path distributions for diffusion models, including bridge path marginals, memoryless sampling, and efficient batch computation. Use when you need to sample from p(x_t | y_1), compute all flow quantities jointly for training, or use Reciprocal Adjoint Matching.
+
 ### `/crf-inference`
 Perform inference in chain-structured Gaussian CRFs with efficient message passing. Use for discrete-time state estimation, computing marginals, or sampling joint distributions.
 
@@ -118,6 +121,12 @@ from linsdex.diffusion_model.probability_path import (
     DiffusionModelConversions,
     ProbabilityPathSlice,
     get_probability_path  # Efficient batch computation at multiple times
+)
+
+# Memoryless sampling for diffusion models
+from linsdex.diffusion_model.memoryless import (
+    sample_memoryless_trajectory,
+    get_memoryless_projection_adjoint_path
 )
 
 # Encoders
