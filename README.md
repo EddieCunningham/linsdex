@@ -2,6 +2,22 @@
 
 `linsdex` is a high performance JAX-based library for linear stochastic differential equations (SDEs), state-space models, and Gaussian inference. It provides a modular and extensible framework for defining, simulating, and conditioning linear-Gaussian systems with support for parallelized inference on GPUs.
 
+## Agent Skills for Cursor IDE
+
+This project includes [Agent Skills](https://cursor.com/docs/context/skills) to help you get started quickly when using Cursor. Skills provide domain-specific guidance that the AI agent can use to help you with common tasks.
+
+To invoke a skill, type `/` in the Cursor chat and search for the skill name, or the agent will automatically apply relevant skills based on context.
+
+| Skill | When to Use |
+|-------|-------------|
+| `/linsdex` | Overview and quick start guide for the entire library |
+| `/sde-conditioning` | Time series interpolation, Brownian bridges, posterior sampling |
+| `/diffusion-conversions` | Converting between y1, score, flow, drift for diffusion models |
+| `/probability-paths` | Bridge path marginals, memoryless sampling, computing p(x_t given y_1) |
+| `/crf-inference` | Discrete-time Gaussian CRF inference, marginals, sampling |
+| `/gaussian-distributions` | Working with three Gaussian parameterizations for numerical stability |
+| `/matrix-operations` | Using specialized matrix types with symbolic tags |
+
 ## Quick Start
 
 Define an SDE, condition it on a starting point, and sample trajectories in parallel using JAX.
