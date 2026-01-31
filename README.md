@@ -9,6 +9,7 @@ Define an SDE, condition it on a starting point, and sample trajectories in para
 ```python
 import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 from linsdex import BrownianMotion
 
 # 1. Define a 2D Brownian Motion SDE
@@ -24,6 +25,14 @@ times = jnp.linspace(0.0, 1.0, 500)
 
 # Use jax.vmap for efficient batch sampling
 trajectories = jax.vmap(conditioned_sde.sample, in_axes=(0, None))(keys, times)
+
+# 4. Plot the trajectories
+plt.figure(figsize=(8, 6))
+for i in range(10):
+  plt.plot(trajectories.values[i, :, 0], trajectories.values[i, :, 1], alpha=0.6)
+plt.xlabel("x1")
+plt.ylabel("x2")
+plt.savefig("quick_start_simple.png")
 ```
 
 ![](quick_start_simple.png)
@@ -47,7 +56,11 @@ The latent state $x_t \in \mathbb{R}^2$ represents the position and velocity of 
 
 $$ dx_t = F x_t dt + L dW_t $$
 
-where $F = \begin{bmatrix} 0 & 1 \\ -\omega^2 & -\gamma \end{bmatrix}$ defines the deterministic drift and $L$ defines the diffusion. The library automatically computes the exact transition distribution $p(x_t | x_{t-1})$ by solving the Lyapunov equation over the time interval $\Delta t$.
+where $F$ defines the deterministic drift and $L$ defines the diffusion. For the harmonic oscillator,
+
+$$ F = \begin{bmatrix} 0 & 1 \\ -\omega^2 & -\gamma \end{bmatrix} $$
+
+The library automatically computes the exact transition distribution $p(x_t | x_{t-1})$ by solving the Lyapunov equation over the time interval $\Delta t$.
 
 We observe the position $y_t \in \mathbb{R}^1$ through a noisy channel
 
@@ -64,7 +77,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as random
 import matplotlib.pyplot as plt
-from linsdex import TimeSeries, StochasticHarmonicOscillator
+from linsdex import TimeSeries, LinearTimeInvariantSDE, DenseMatrix, DiagonalMatrix
 from linsdex.ssm.simple_encoder import PaddingLatentVariableEncoderWithPrior
 
 # 1. Define time series data
@@ -73,14 +86,12 @@ times = jnp.linspace(0, 10, 5)
 values = jnp.sin(times)[:, None]
 series = TimeSeries(times, values)
 
-# 2. Define a linear SDE (base process)
-# We use a Stochastic Harmonic Oscillator which has a 2D state (1D position, 1D velocity)
-sde = StochasticHarmonicOscillator(
-    freq=1.0,
-    coeff=0.1,
-    sigma=0.5,
-    observation_dim=1
-)
+# 2. Define a linear SDE by specifying F and L
+# Harmonic oscillator with state x = [position, velocity]
+freq, coeff, sigma = 1.0, 0.1, 0.5
+F = DenseMatrix(jnp.array([[0, 1], [-freq**2, -coeff]]))
+L = DiagonalMatrix(jnp.array([0, sigma]))
+sde = LinearTimeInvariantSDE(F=F, L=L)
 
 # 3. Create potentials from data and condition the SDE
 # PaddingLatentVariableEncoderWithPrior pads the 1D observations to the 2D latent space
