@@ -58,7 +58,7 @@ $$ dx_t = F x_t dt + L dW_t $$
 
 where $F$ defines the deterministic drift and $L$ defines the diffusion. For the harmonic oscillator,
 
-$$ F = \begin{bmatrix} 0 & 1 \\ -\omega^2 & -\gamma \end{bmatrix} $$
+$$ F = \begin{bmatrix} 0 & 1 \\\ -\omega^2 & -\gamma \end{bmatrix} $$
 
 The library automatically computes the exact transition distribution $p(x_t | x_{t-1})$ by solving the Lyapunov equation over the time interval $\Delta t$.
 
