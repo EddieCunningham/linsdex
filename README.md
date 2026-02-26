@@ -231,7 +231,7 @@ Matrices carry symbolic tags like `TAGS.zero_tags` and `TAGS.eye_tags`. These ta
 ## Installation
 
 ```bash
-pip install .
+pip install linsdex
 ```
 
 ## Citation
