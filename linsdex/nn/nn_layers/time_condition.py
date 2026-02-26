@@ -1,0 +1,118 @@
+import jax
+import jax.numpy as jnp
+from jax import random
+from functools import partial
+import einops
+import equinox as eqx
+from jaxtyping import Array, PRNGKeyArray
+from typing import Optional, Mapping, Tuple, Sequence, Union, Any, Callable
+from linsdex import AbstractBatchableObject
+
+__all__ = ['GaussianFourierProjection',
+           'TimeFeatures']
+
+################################################################################################################
+
+class GaussianFourierProjection(AbstractBatchableObject):
+
+  embedding_size: int = eqx.field(static=True)
+  W: eqx.nn.Linear
+
+  def __init__(self,
+               embedding_size: Optional[int] = 16,
+               *,
+               key: PRNGKeyArray,
+               **kwargs):
+    """**Arguments**:
+
+    - `embedding_size`: The size of the embedding.
+    """
+    super().__init__(**kwargs)
+
+    self.embedding_size = embedding_size
+    self.W = eqx.nn.Linear(in_features=1,
+                           out_features=embedding_size,
+                           use_bias=False,
+                           key=key)
+
+  @property
+  def batch_size(self) -> Union[None, int, Tuple[int]]:
+    ndim = self.W.weight.ndim
+    if ndim == 2:
+      return None
+    elif ndim == 3:
+      return self.W.weight.shape[0]
+    elif ndim > 3:
+      return self.W.weight.shape[:-2]
+    else:
+      raise ValueError(f"Invalid batch size: {ndim}")
+
+  def __call__(self, t: Array) -> Array:
+    """**Arguments:**
+
+    - `t`: A JAX array with shape `()`.
+
+    **Returns:**
+
+    A JAX array with shape `(2*embedding_size,)`.
+    """
+    t = jnp.array(t)
+    assert t.shape == ()
+    t = jnp.expand_dims(t, axis=-1)
+    t_proj = self.W(t*2*jnp.pi)
+    return jnp.concatenate([jnp.sin(t_proj), jnp.cos(t_proj)], axis=-1)
+
+class TimeFeatures(AbstractBatchableObject):
+
+  out_features: int = eqx.field(static=True)
+  projection: GaussianFourierProjection
+  W1: Array
+  W2: Array
+  activation: Callable = eqx.field(static=True)
+
+  def __init__(self,
+               embedding_size: Optional[int] = 16,
+               out_features: int=8,
+               activation: Callable = jax.nn.gelu,
+               *,
+               key: PRNGKeyArray,
+               **kwargs):
+    """**Arguments**:
+
+    - `embedding_size`: The size of the embedding.
+    - `out_features`: The number of output features.
+    - `activation`: The activation function.
+    """
+    super().__init__(**kwargs)
+    self.out_features = out_features
+
+    k1, k2, k3 = random.split(key, 3)
+    self.projection = GaussianFourierProjection(embedding_size=embedding_size,
+                                                key=k1)
+    self.W1 = eqx.nn.Linear(in_features=2*embedding_size,
+                            out_features=4*embedding_size,
+                            key=k2)
+    self.activation = activation
+    self.W2 = eqx.nn.Linear(in_features=4*embedding_size,
+                            out_features=self.out_features,
+                            key=k3)
+
+  @property
+  def batch_size(self) -> Union[None, int, Tuple[int]]:
+    return self.projection.batch_size
+
+  def __call__(self, t: Array) -> Array:
+    """**Arguments:**
+
+    - `t`: A JAX array with shape `()`.
+
+    **Returns:**
+
+    A JAX array with shape `(out_features,)`.
+    """
+    t = jnp.array(t)
+    assert t.shape == ()
+    x = self.projection(t)
+    x = self.W1(x)
+    x = self.activation(x)
+    return self.W2(x)
